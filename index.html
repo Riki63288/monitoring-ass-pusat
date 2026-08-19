@@ -7,7 +7,7 @@
 <style>
 /* ============================================================
    PORTAL MONITORING ASS — PUSAT
-   Build Pusat V1.7.7.4  |  PRE-GITHUB RELEASE CANDIDATE MICROFIX
+   Build Pusat V1.7.7.8  |  MASTER APPLY ENABLED
 
    V1.7.7.4 — PROCESS PERIOD AUTHORITY ROUTING
    A. KPI Summary PROSES membaca source_meta.process_period_summary V1 dari
@@ -1395,6 +1395,11 @@ table{ border-collapse:separate; border-spacing:0; width:100%; }
 .project-master-stat b{ display:block;margin-top:4px;font-size:17px;color:var(--ink-1); }
 .project-preview-table{ max-height:330px;overflow:auto;border:1px solid var(--line);border-radius:8px; }
 .project-preview-table table{ margin:0; }
+.master-status{display:inline-flex;align-items:center;justify-content:center;min-width:72px;padding:3px 7px;border-radius:999px;font-size:10.5px;font-weight:800;letter-spacing:.02em}
+.master-status.active{background:var(--st-good-wash);color:#08603f;border:1px solid #b8dfca}
+.master-status.takeout{background:#f4f1ed;color:#775a45;border:1px solid #ddd3c8}
+.master-diff{font-size:11px;line-height:1.35}.master-diff b{color:var(--ink-1)}
+.master-actions{display:flex;gap:8px;flex-wrap:wrap;align-items:center}.master-actions .rk-file{margin:0}
 .project-empty-note{ margin:10px 0;padding:11px 13px;border-radius:8px;background:#fff8e8;border:1px solid #eedba5;color:#705615;font-size:12px; }
 </style>
 </head>
@@ -1412,7 +1417,7 @@ table{ border-collapse:separate; border-spacing:0; width:100%; }
       <span class="hdr-clock" id="hdrClock"></span>
       <span class="badge-demo" id="demoBadge"
             title="Status sumber data Monitoring Pusat.">MEMUAT…</span>
-      <span class="badge-build">Build Pusat V1.7.7.4</span>
+      <span class="badge-build">Build Pusat V1.7.7.8</span>
     </div>
   </div>
   <nav class="app-nav" id="appNav" aria-label="Navigasi utama">
@@ -1986,7 +1991,7 @@ const DemoDataProvider = (function () {
     if (!scope || (!scope.regional && !scope.branch)) return null;
     return (typeof OrgResolver !== 'undefined') ? OrgResolver.depotSetOf(scope) : null;
   }
-  function inScope(row, scope, allow) {
+  function inScope(row, scope, allow, domain) {
     const set = allow === undefined ? allowSetFor(scope) : allow;
     if (set && !set[row.depot_code]) return false;
     if (scope.depot    && row.depot_code    !== scope.depot)    return false;
@@ -2280,6 +2285,116 @@ const LiveGateway = {
   }
 };
 
+/* V1.7.7.7 — gateway governance terpisah agar Read Gateway existing tidak
+   di-overwrite. Token/auth mengikuti konfigurasi existing; service-role tetap
+   hanya berada di Edge Function. */
+/* V1.7.7.8 — MASTER APPLY ENABLED.
+   User memilih workflow tanpa PIN/login. Write tetap hanya melalui Edge Function
+   + RPC transactional; service-role tidak pernah berada di HTML. */
+const MASTER_CONTROL_WRITE_ENABLED = true;
+
+const MasterControlGateway = {
+  functionUrl: function () {
+    const base = String(MONITORING_PUSAT_CONFIG.SUPABASE_URL || '').trim().replace(/\/+$/, '');
+    return base ? base + '/functions/v1/monitoring-pusat-master' : '';
+  },
+  call: function (action, payload) {
+    const url = this.functionUrl();
+    if (!url) return Promise.reject(new Error('SUPABASE_URL belum dikonfigurasi.'));
+    const c = MONITORING_PUSAT_CONFIG, headers = { 'Content-Type': 'application/json' };
+    if (c.AUTH_MODE === 'token') headers['X-Pusat-Read-Token'] = String(c.READ_ACCESS_TOKEN || '');
+    else {
+      const tok = LiveGateway.accessToken();
+      if (!tok) return Promise.reject(new Error('Sesi login Supabase tidak ditemukan.'));
+      headers.Authorization = 'Bearer ' + tok;
+    }
+    if (String(c.SUPABASE_ANON_KEY || '').trim()) headers.apikey = String(c.SUPABASE_ANON_KEY);
+    return fetch(url, { method: 'POST', headers: headers,
+      body: JSON.stringify(Object.assign({ action: action }, payload || {})) })
+      .then(function (r) { return r.text().then(function (t) {
+        let d = null; try { d = t ? JSON.parse(t) : null; } catch (e) {}
+        if (!r.ok || !d || d.ok !== true) throw new Error((d && d.error && d.error.message) || 'Master Cabang gateway gagal.');
+        return d.data || {};
+      }); });
+  }
+};
+
+/* Central authority keyed by depot_code. Missing field pada payload lama = AKTIF. */
+const MasterCabangAuthority = {
+  rev: 0, rows: [], byDepot: {}, loaded: false,
+  normStatus: function (v) {
+    const x = String(v === null || v === undefined ? '' : v).trim().toUpperCase().replace(/\s+/g, ' ');
+    return x === 'TAKE OUT' ? 'TAKE OUT' : 'AKTIF';
+  },
+  hydrate: function (rows) {
+    const out = [], by = {};
+    (rows || []).forEach(function (r) {
+      const code = LiveNormalize.code(r && r.depot_code); if (!code || by[code]) return;
+      const rec = Object.assign({}, r, {
+        depot_code: code,
+        status_monitoring: MasterCabangAuthority.normStatus(r.status_monitoring),
+        status_ranking: MasterCabangAuthority.normStatus(r.status_ranking),
+        status_informasi: MasterCabangAuthority.normStatus(r.status_informasi)
+      });
+      by[code] = rec; out.push(rec);
+    });
+    this.rows = out; this.byDepot = by; this.loaded = true; this.rev++;
+    return out;
+  },
+  status: function (code, domain) {
+    const r = this.byDepot[LiveNormalize.code(code)];
+    if (!r) return 'AKTIF';
+    const key = domain === 'ranking' ? 'status_ranking' : domain === 'informasi' ? 'status_informasi' : 'status_monitoring';
+    return this.normStatus(r[key]);
+  },
+  allowed: function (code, domain) { return this.status(code, domain) === 'AKTIF'; },
+  scopeAllowed: function (scope, domain) {
+    const sc = scope || {};
+    if (sc.depot) return this.allowed(sc.depot, domain);
+    return true;
+  },
+  scopeHasAllowed: function (scope, domain) {
+    const sc = scope || {};
+    if (sc.depot) return this.allowed(sc.depot, domain);
+    try {
+      const list = OrgResolver.depotCodesOf(sc).list || [];
+      for (let i = 0; i < list.length; i++) if (this.allowed(list[i].code || list[i], domain)) return true;
+      return false;
+    } catch (e) { return true; }
+  },
+  syncLiveStore: function () {
+    if (typeof LiveDataStore !== 'undefined' && LiveDataStore && LiveDataStore.masterDepots) {
+      const by = this.byDepot;
+      LiveDataStore.masterDepots = LiveDataStore.masterDepots.map(function (r) {
+        return Object.assign({}, r, by[LiveNormalize.code(r.depot_code)] || {});
+      });
+      LiveDataStore.org = LiveNormalize.buildOrg(LiveDataStore.masterDepots,
+        LiveDataStore.process.daily || [], LiveDataStore.result.mtd || [],
+        (typeof LiveLoader !== 'undefined' && LiveLoader._batchIndex) || {});
+    }
+    return this.rows;
+  },
+  refresh: function () {
+    const self = this;
+    return MasterControlGateway.call('get', {}).then(function (d) {
+      self.hydrate(d.rows || []);
+      return self.syncLiveStore();
+    });
+  },
+  apply: function (changes) {
+    if (!MASTER_CONTROL_WRITE_ENABLED)
+      return Promise.reject(new Error('Apply Master Cabang dinonaktifkan oleh konfigurasi aplikasi.'));
+    const self = this;
+    return MasterControlGateway.call('apply', { changes: changes || [] }).then(function (d) {
+      /* Gunakan rows terbaru dari response apply supaya success tidak berubah
+         menjadi false-failure hanya karena GET kedua mengalami gangguan jaringan. */
+      self.hydrate(d.rows || []);
+      self.syncLiveStore();
+      return d;
+    });
+  }
+};
+
 /* ---------------------------------------------------------------------------
    VALIDASI RESPONSE (client-side). Response yang tidak valid TIDAK dipakai.
    --------------------------------------------------------------------------- */
@@ -2416,7 +2531,9 @@ const LiveDataStore = {
     mtdRecords: [], dailyRecords: [], dailyIndex: {}, eceranSegments: [],
     /* V1.7.7 — RESULT DAILY DEPOT V2 (ORDER_DATE, Depo x Tanggal) */
     dailyDepot: { rows: [], byDepotDate: {}, byDate: {}, depots: [], dates: [],
-                  available: false, notes: [] }
+                  available: false, notes: [] },
+    /* V1.7.7.7 — exact Current/Baseline pair per Depo dari Website ASS */
+    baselineDepot: { rows: [], byDepot: {}, available: false, notes: [] }
   },
 
   org: {
@@ -2497,7 +2614,8 @@ const LiveDataStore = {
                     targets: [], daily: [], dailyEceran: [], mtdEceran: [],
                     mtdRecords: [], dailyRecords: [], dailyIndex: {}, eceranSegments: [],
                     dailyDepot: { rows: [], byDepotDate: {}, byDate: {}, depots: [], dates: [],
-                                  available: false, notes: [] } };
+                                  available: false, notes: [] },
+                    baselineDepot: { rows: [], byDepot: {}, available: false, notes: [] } };
     this.org = { regionals: [], branches: [], depots: [], ass: [], salesmen: [],
                  byCode: { regional: {}, branch: {}, depot: {}, ass: {}, salesman: {} } };
     this.bump();
@@ -2675,6 +2793,47 @@ const LiveNormalize = {
       if (anyMetric) out.push(rec);
     }
     return out.length ? out : null;
+  },
+
+  /* ---- RESULT V1.7.7.7: authoritative comparison pair dari Website ASS ---- */
+  resultBaselineDepotOf: function (batch, org, diagnostics) {
+    const meta = this.sourceMetaOf(batch);
+    if (!meta || meta.result_baseline_depot_available !== true ||
+        Number(meta.result_baseline_depot_version) !== 1) return null;
+    const raw = meta.result_baseline_depot;
+    if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null;
+    const depot = this.code(batch.depot_code); if (!depot) return null;
+    const note = function (m) { if (diagnostics && diagnostics.length < 40) diagnostics.push(m); };
+    const date = function (v, monthOnly) {
+      const x = LiveNormalize.s(v || '').slice(0, 10);
+      const ok = /^\d{4}-\d{2}-\d{2}$/.test(x);
+      if (!ok) return null;
+      return monthOnly && x.slice(8, 10) !== '01' ? null : x;
+    };
+    const nonNeg = function (v) { return LiveNormalize.numIn(v, 0, null); };
+    const curMonth = date(raw.current_period_month, true);
+    const baseMonth = date(raw.baseline_period_month, true);
+    const current = raw.current, baseline = raw.baseline;
+    if (!curMonth || !baseMonth || !current || !baseline ||
+        typeof current !== 'object' || typeof baseline !== 'object') {
+      note('Depo ' + depot + ': result_baseline_depot tidak lengkap.'); return null;
+    }
+    const rec = {
+      batch_id: this.s(batch.batch_id), depot_code: depot,
+      authority: this.s(raw.authority), scope: this.s(raw.scope), slot: this.s(raw.slot),
+      comparison_basis: this.s(raw.comparison_basis),
+      current_period_month: curMonth, current_hk: nonNeg(raw.current_hk),
+      current_cutoff_date: date(raw.current_cutoff_date, false),
+      baseline_period_month: baseMonth, baseline_hk: nonNeg(raw.baseline_hk),
+      baseline_cutoff_date: date(raw.baseline_cutoff_date, false),
+      current: { omset: nonNeg(current.omset), roa: nonNeg(current.roa_count), ec: nonNeg(current.ec_count) },
+      baseline: { omset: nonNeg(baseline.omset), roa: nonNeg(baseline.roa_count), ec: nonNeg(baseline.ec_count) }
+    };
+    if (rec.current_hk === null || rec.baseline_hk === null ||
+        ['omset','roa','ec'].some(function (k) { return rec.current[k] === null || rec.baseline[k] === null; })) {
+      note('Depo ' + depot + ': result_baseline_depot memiliki metric/HK invalid.'); return null;
+    }
+    return rec;
   },
 
   /* ---- RESULT: source_meta.result_daily_depot (V2, ORDER_DATE, Depo x Tanggal) ---- */
@@ -3187,6 +3346,7 @@ const LiveLoader = {
         throw LiveGateway._err('MASTER_EMPTY', 'Master organisasi pusat gagal dimuat: public.master_depot tidak mengembalikan depo aktif.');
 
       S.masterDepots = d.master_depots;
+      MasterCabangAuthority.hydrate(S.masterDepots);
       S.allActiveBatches = d.batches || [];
       S.availablePeriods = { process: (d.available_periods || {}).process || [],
                              result: (d.available_periods || {}).result || [] };
@@ -3461,6 +3621,22 @@ const LiveLoader = {
       });
       const ddDates = Object.keys(ddDateSeen).sort();
 
+      /* V1.7.7.7 — comparison authority per Depo. Index O(1), revision aktif
+         terakhir menang. Payload legacy tetap valid dan menghasilkan array kosong. */
+      const bdNotes = [], bdRows = [], bdByDepot = {};
+      (d.batches || []).forEach(function (b) {
+        let rec = null;
+        try { rec = LiveNormalize.resultBaselineDepotOf(b, S.org, bdNotes); }
+        catch (err) {
+          if (bdNotes.length < 40) bdNotes.push('Depo ' + LiveNormalize.code(b && b.depot_code) +
+            ': result_baseline_depot gagal dibaca (' + ((err && err.message) || 'tidak diketahui') + ').');
+        }
+        if (!rec) return;
+        const at = bdByDepot[rec.depot_code];
+        if (at === undefined) { bdByDepot[rec.depot_code] = bdRows.length; bdRows.push(rec); }
+        else bdRows[at] = rec;
+      });
+
       S.result = {
         periodMonth: d.period_month || null,
         hkMax: hkMax,
@@ -3471,10 +3647,14 @@ const LiveLoader = {
         eceranSegments: segments,
         dailyDepot: { rows: ddRows, byDepotDate: ddByDepotDate, byDate: ddByDate,
                       depots: Object.keys(ddDepotSeen), dates: ddDates,
-                      available: ddRows.length > 0, notes: ddNotes }
+                      available: ddRows.length > 0, notes: ddNotes },
+        baselineDepot: { rows: bdRows, byDepot: bdByDepot,
+                         available: bdRows.length > 0, notes: bdNotes }
       };
       if (ddNotes.length) ddNotes.forEach(function (n) {
         const t = 'HASIL · ' + n; if (S.notes.indexOf(t) < 0) S.notes.push(t); });
+      if (bdNotes.length) bdNotes.forEach(function (n) {
+        const t = 'HASIL BASELINE · ' + n; if (S.notes.indexOf(t) < 0) S.notes.push(t); });
       (d.schema_notes || []).forEach(function (n) { if (S.notes.indexOf(n) < 0) S.notes.push(n); });
       S.status.result = 'ready';
       S.bump();
@@ -3513,16 +3693,17 @@ const ApiDataProvider = (function () {
     if (typeof OrgResolver !== 'undefined' && OrgResolver.depotSetOf) return OrgResolver.depotSetOf(sc);
     return null;
   }
-  function inScope(row, scope, allow) {
+  function inScope(row, scope, allow, domain) {
     const sc = scope || {};
     const set = allow === undefined ? allowSetFor(sc) : allow;
     if (set && !set[row.depot_code]) return false;
     if (sc.depot && row.depot_code !== sc.depot) return false;
     if (sc.ass && row.ass_code !== sc.ass) return false;
     if (sc.salesman && row.salesman_code !== sc.salesman) return false;
+    if (domain !== 'none' && !MasterCabangAuthority.allowed(row.depot_code, domain || 'monitoring')) return false;
     return true;
   }
-  function pick(index, from, to, scope) {
+  function pick(index, from, to, scope, domain) {
     const out = [], allow = allowSetFor(scope || {});
     const keys = Object.keys(index);
     for (let i = 0; i < keys.length; i++) {
@@ -3531,7 +3712,7 @@ const ApiDataProvider = (function () {
       if (to && d > to) continue;
       const bucket = index[d];
       for (let j = 0; j < bucket.length; j++) {
-        if (inScope(bucket[j], scope || {}, allow)) out.push(bucket[j]);
+        if (inScope(bucket[j], scope || {}, allow, domain)) out.push(bucket[j]);
       }
     }
     return out;
@@ -3566,6 +3747,7 @@ const ApiDataProvider = (function () {
 
     /* ---- PROSES ---- */
     getRecords: function (range, scope) { return pick(S.process.recIndex, range && range.from, range && range.to, scope || {}); },
+    getRankingRecords: function (range, scope) { return pick(S.process.recIndex, range && range.from, range && range.to, scope || {}, 'none'); },
     getEvents: function (range, scope) { return pick(S.process.evIndex, range && range.from, range && range.to, scope || {}); },
 
     /* ---- HASIL ---- */
@@ -3574,12 +3756,20 @@ const ApiDataProvider = (function () {
       const allow = allowSetFor(scope || {}), out = [];
       for (let i = 0; i < S.result.mtdRecords.length; i++) {
         const r = S.result.mtdRecords[i];
-        if (inScope(r, scope || {}, allow)) out.push(r);
+        if (inScope(r, scope || {}, allow, 'monitoring')) out.push(r);
       }
       return out;
     },
     getResultDailyRecords: function (range, scope) {
       return pick(S.result.dailyIndex, range && range.from, range && range.to, scope || {});
+    },
+    getRankingResultMtdRecords: function (scope) {
+      const allow = allowSetFor(scope || {}), out = [];
+      for (let i = 0; i < S.result.mtdRecords.length; i++) {
+        const r = S.result.mtdRecords[i];
+        if (inScope(r, scope || {}, allow, 'none')) out.push(r);
+      }
+      return out;
     },
     /* kompatibilitas nama lama: dipakai hanya oleh jalur harian */
     getResultRecords: function (range, scope) { return this.getResultDailyRecords(range, scope); },
@@ -3595,13 +3785,14 @@ const ApiDataProvider = (function () {
       const allow = allowSetFor(scope || {}), out = [];
       for (let i = 0; i < S.result.mtdRecords.length; i++) {
         const r = S.result.mtdRecords[i];
-        if (inScope(r, scope || {}, allow)) out.push(r);
+        if (inScope(r, scope || {}, allow, 'monitoring')) out.push(r);
       }
       return out;
     },
     getProcessDepotSummary: function () { return S.process.depotSummary; },
     getProcessPeriodSummary: function () { return S.process.periodSummary; },
     getResultDailyDepot: function () { return S.result.dailyDepot; },
+    getResultBaselineDepot: function () { return S.result.baselineDepot; },
     getResultTargets: function () { return S.result.targets.slice(); },
     getResultDailyEceran: function () { return S.result.dailyEceran.slice(); },
     getResultMtdEceran: function () { return S.result.mtdEceran.slice(); },
@@ -3634,7 +3825,12 @@ const ApiDataProvider = (function () {
                  accepted_row_count: b.accepted_row_count === undefined ? null : b.accepted_row_count,
                  rejected_row_count: b.rejected_row_count === undefined ? null : b.rejected_row_count };
       }
-      return { process: S.process.batches.map(mapBatch), result: S.result.batches.map(mapBatch) };
+      const process = S.process.batches.map(mapBatch), result = S.result.batches.map(mapBatch);
+      const all = process.concat(result), depots = {};
+      all.forEach(function (b) { const code = LiveNormalize.code(b.depot_code); if (code) depots[code] = 1; });
+      return { process: process, result: result,
+        preview_counts: { depots: Object.keys(depots).length, batches: all.length,
+          identity: 'DISTINCT depot_code' } };
     }
   };
 })();
@@ -3708,7 +3904,8 @@ const ProviderHub = {
       'getResultTargets', 'getResultDailyEceran', 'getResultMtdEceran', 'audit',
       /* V1.7.7 — extension source_meta + jalur TOTAL DEPO (sengaja di luar rowMethods
          sehingga tidak terkena filter Coverage Salesman). */
-      'getProcessDepotSummary', 'getProcessPeriodSummary', 'getResultDailyDepot', 'getResultMtdRecordsRaw'];
+      'getProcessDepotSummary', 'getProcessPeriodSummary', 'getResultDailyDepot', 'getResultBaselineDepot', 'getResultMtdRecordsRaw',
+      'getRankingRecords', 'getRankingResultMtdRecords'];
     const f = {};
     passthrough.concat(optional).forEach(function (name) {
       f[name] = function () {
@@ -3718,7 +3915,7 @@ const ProviderHub = {
         /* V1.7.5 — satu gerbang filter bisnis untuk seluruh record Proses,
            Hasil, dan Anomali. Information memakai facade lain dan tidak terkena. */
         const rowMethods = { getRecords: 1, getEvents: 1, getResultRecords: 1,
-          getResultMtdRecords: 1, getResultDailyRecords: 1 };
+          getResultMtdRecords: 1, getResultDailyRecords: 1, getRankingRecords: 1, getRankingResultMtdRecords: 1 };
         const projectScope = window.SalesmanProjectScope || null;
         if (rowMethods[name] && projectScope)
           return projectScope.filterRows(value);
@@ -4054,7 +4251,8 @@ const DashboardService = (function (DP) {
       const sc = scope || {};
       if (sc.ass || sc.salesman) return [];
       const set = depotSetInScope(sc), out = [];
-      for (let i = 0; i < st.rows.length; i++) if (set[st.rows[i].depot_code]) out.push(st.rows[i]);
+      for (let i = 0; i < st.rows.length; i++) if (set[st.rows[i].depot_code] &&
+        MasterCabangAuthority.allowed(st.rows[i].depot_code, 'monitoring')) out.push(st.rows[i]);
       return out;
     },
     available: function (scope, periodKey) { return this.rowsFor(scope, periodKey).length > 0; },
@@ -4150,8 +4348,11 @@ const DashboardService = (function (DP) {
   function childrenOf(scope) {
     const org = DP.org(), lvl = levelOf(scope);
     const projectChildren = function (list) {
-      if (typeof SalesmanProjectScope === 'undefined' || SalesmanProjectScope.isAll()) return list;
-      return list.filter(function (c) { return SalesmanProjectScope.hasMatchInScope(c.scope); });
+      return list.filter(function (c) {
+        if (!MasterCabangAuthority.scopeHasAllowed(c.scope, 'monitoring')) return false;
+        return typeof SalesmanProjectScope === 'undefined' || SalesmanProjectScope.isAll() ||
+          SalesmanProjectScope.hasMatchInScope(c.scope);
+      });
     };
     /* V1.6.6 — Regional / Cabang / Depo bersumber dari resolved organization graph */
     if (lvl === 'national') return projectChildren(OrgResolver.childrenAt({}, 'regional'));
@@ -4160,6 +4361,7 @@ const DashboardService = (function (DP) {
     /* Depo -> ASS. Daftar ASS diturunkan dari salesman pada scope aktif (bukan dari
        asumsi 1 depo = 1 ASS), sehingga tetap benar bila kelak satu ASS lintas depo. */
     if (lvl === 'depot') {
+      if (!MasterCabangAuthority.allowed(scope.depot, 'monitoring')) return [];
       const seen = {}, out = [];
       org.salesmen.forEach(function (s) {
         if (typeof SalesmanProjectScope !== 'undefined' && !SalesmanProjectScope.isAllowed(s.salesman_code)) return;
@@ -4175,6 +4377,7 @@ const DashboardService = (function (DP) {
     /* ASS -> Salesman (dibatasi depo aktif bila ada, agar ASS lintas depo tetap benar) */
     return org.salesmen.filter(function (s) {
         return (typeof SalesmanProjectScope === 'undefined' || SalesmanProjectScope.isAllowed(s.salesman_code)) &&
+          MasterCabangAuthority.allowed(s.depot_code, 'monitoring') &&
           s.ass_code === scope.ass && (!scope.depot || s.depot_code === scope.depot); })
       .map(function (s) {
         const rd = OrgResolver.resolveDepot(s.depot_code);
@@ -4386,6 +4589,75 @@ const DashboardService = (function (DP) {
      V1.7.0 — HASIL KERJA memakai PERIODE SENDIRI. PROCESS boleh berada pada
      bulan yang berbeda dari RESULT dan itu kondisi VALID; tidak ada satu
      DP.lastDate() global yang memaksa keduanya sama. */
+  const ResultBaseline = {
+    store: function () {
+      if (!isLiveMode() || typeof DP.getResultBaselineDepot !== 'function') return null;
+      const s = DP.getResultBaselineDepot();
+      return s && s.available ? s : null;
+    },
+    rowsFor: function (scope) {
+      const s = this.store(); if (!s) return [];
+      if ((scope || {}).ass || (scope || {}).salesman) return [];
+      const set = depotSetInScope(scope || {}), out = [];
+      for (let i = 0; i < s.rows.length; i++) {
+        const r = s.rows[i];
+        if (set[r.depot_code] && MasterCabangAuthority.allowed(r.depot_code, 'monitoring')) out.push(r);
+      }
+      return out;
+    },
+    currentDepotCodes: function (scope) {
+      if ((scope || {}).ass || (scope || {}).salesman) return [];
+      const seen = {}, out = [];
+      try {
+        const recs = (typeof DP.getResultMtdRecordsRaw === 'function') ? (DP.getResultMtdRecordsRaw(scope || {}) || []) : [];
+        for (let i = 0; i < recs.length; i++) {
+          const code = String(recs[i] && recs[i].depot_code || '').trim();
+          if (!code || seen[code] || !MasterCabangAuthority.allowed(code, 'monitoring')) continue;
+          seen[code] = 1; out.push(code);
+        }
+      } catch (e) { /* coverage diagnostic tidak boleh memblokir comparison */ }
+      return out;
+    },
+    aggregate: function (scope) {
+      const sc = scope || {}, grainSupported = !sc.ass && !sc.salesman;
+      const rows = grainSupported ? this.rowsFor(sc) : [], currentDepots = grainSupported ? this.currentDepotCodes(sc) : [];
+      const dist = {}, current = { omset: 0, roa: 0, ec: 0 }, baseline = { omset: 0, roa: 0, ec: 0 };
+      rows.forEach(function (r) {
+        ['omset','roa','ec'].forEach(function (k) { current[k] += r.current[k]; baseline[k] += r.baseline[k]; });
+        const key = r.baseline_period_month; dist[key] = (dist[key] || 0) + 1;
+      });
+      const keys = Object.keys(dist).sort(), totalDepots = Math.max(currentDepots.length, rows.length);
+      return { available: rows.length > 0, rows: rows, current: rows.length ? current : null,
+        baseline: rows.length ? baseline : null, grainSupported: !!grainSupported,
+        validDepots: rows.length, totalDepots: totalDepots, missingDepots: Math.max(0, totalDepots - rows.length),
+        periods: keys, distribution: dist, mixed: keys.length > 1,
+        currentPeriod: rows.length && rows.every(function (r) { return r.current_period_month === rows[0].current_period_month; })
+          ? rows[0].current_period_month : null,
+        currentHk: rows.length && rows.every(function (r) { return r.current_hk === rows[0].current_hk; }) ? rows[0].current_hk : null,
+        baselinePeriod: keys.length === 1 ? keys[0] : null,
+        baselineHk: rows.length && rows.every(function (r) { return r.baseline_hk === rows[0].baseline_hk; }) ? rows[0].baseline_hk : null };
+    },
+    labelMonth: function (iso, short) {
+      if (!/^\d{4}-\d{2}/.test(String(iso || ''))) return '\u2013';
+      const m = Number(String(iso).slice(5,7)), y = String(iso).slice(0,4);
+      return (short ? U.MON_S[m - 1] : U.MONTHS[m - 1]) + ' ' + y;
+    },
+    header: function (agg, fallbackCurrent) {
+      const cur = agg.currentPeriod ? this.labelMonth(agg.currentPeriod) : fallbackCurrent;
+      const curHk = agg.currentHk === null ? '' : ' HK' + U.int(agg.currentHk);
+      const coverage = agg.grainSupported === false || !agg.totalDepots ? '' :
+        (U.int(agg.validDepots) + '/' + U.int(agg.totalDepots) + ' Depo' +
+         (agg.missingDepots ? ' · ' + U.int(agg.missingDepots) + ' Depo belum tersedia' : ''));
+      if (!agg.available) return { title: cur + curHk + ' · Baseline belum tersedia', baselineLabel: 'Baseline', distribution: '', coverage: coverage };
+      if (agg.mixed) {
+        const distribution = agg.periods.map(function (p) { return agg.distribution[p] + ' Depo ' + ResultBaseline.labelMonth(p, true); }).join(' · ');
+        return { title: cur + curHk + ' vs Baseline Campuran', baselineLabel: 'Baseline Campuran', distribution: distribution, coverage: coverage };
+      }
+      return { title: cur + curHk + ' vs ' + this.labelMonth(agg.baselinePeriod) + ' Baseline' +
+        (agg.baselineHk === null ? '' : ' HK' + U.int(agg.baselineHk)), baselineLabel: this.labelMonth(agg.baselinePeriod, true) + ' Baseline', distribution: '', coverage: coverage };
+    }
+  };
+
   function liveResultContext() {
     /* RankingTat memakai InformationService (authority HK yang sama dengan menu
        Informasi) dan hasilnya di-cache, sehingga tidak ada request jaringan baru
@@ -4413,24 +4685,23 @@ const DashboardService = (function (DP) {
       }
     } catch (e) { /* extension gagal dibaca -> legacy, domain lain tidak terganggu */ }
     const mon = period ? period.slice(0, 7) : (cutoff ? cutoff.slice(0, 7) : null);
-    let curLabel = '\u2013', prevMonth = null, prevLabel = '\u2013', prevFrom = null, prevTo = null;
+    let curLabel = '\u2013';
     if (mon) {
       const y = Number(mon.slice(0, 4)), mm = Number(mon.slice(5, 7));
       curLabel = U.MONTHS[mm - 1] + ' ' + y;
-      const pd = new Date(y, mm - 2, 1);
-      prevMonth = pd.getFullYear() + '-' + U.pad(pd.getMonth() + 1);
-      prevLabel = U.MONTHS[pd.getMonth()] + ' ' + pd.getFullYear();
-      prevFrom = prevMonth + '-01'; prevTo = prevMonth + '-31';
     }
+    const ba = ResultBaseline.aggregate({});
+    const bh = ResultBaseline.header(ba, curLabel);
     return {
       live: true,
-      latest: cutoff, currentMonth: mon, previousMonth: prevMonth,
+      latest: cutoff, currentMonth: mon, previousMonth: ba.baselinePeriod,
       currentDates: dates, previousDates: [],
       currentRange: dates.length ? { from: dates[0], to: dates[dates.length - 1] }
                                  : { from: cutoff, to: cutoff },
-      previousRange: { from: prevFrom, to: prevTo },
-      currentLabel: curLabel, previousLabel: prevLabel,
-      hk: hk, previousHk: null,
+      previousRange: { from: null, to: null },
+      currentLabel: curLabel, previousLabel: ba.available ? (ba.mixed ? 'Baseline Campuran' : ResultBaseline.labelMonth(ba.baselinePeriod)) : 'Baseline belum tersedia',
+      hk: hk, previousHk: ba.baselineHk,
+      baselineHeader: bh, baselineAvailable: ba.available,
       /* V1.7.4 — TAT PRODUCTION.
            TAT = HK BERJALAN RESULT (MAX result_hk pada Monitoring Scope)
                  ÷ TOTAL HK BULAN (input manual business, per bulan RESULT)
@@ -5011,6 +5282,30 @@ const DashboardService = (function (DP) {
   }
   function getResultDetail(scope) {
     const ctx = resultContext(), curRows = resultRows(scope || {}, ctx, 'current'), prevRows = resultRows(scope || {}, ctx, 'previous');
+    if (isLiveMode()) {
+      curRows.forEach(function (r) {
+        const a = ResultBaseline.aggregate(r.scope);
+        if (a.available) {
+          r.metrics = Object.assign({}, r.metrics, a.current, { hasData: true });
+          r.previous = Object.assign({ hasData: true }, a.baseline);
+          r.baselineMeta = a;
+        } else {
+          r.previous = aggregateResult([]); r.baselineMeta = a;
+        }
+        r.growth = { omset: resultGrowth(r.metrics.omset, r.previous.omset),
+                     roa: resultGrowth(r.metrics.roa, r.previous.roa),
+                     ec: resultGrowth(r.metrics.ec, r.previous.ec) };
+      });
+      curRows.sort(function (a, b) {
+        const av = a.growth.omset, bv = b.growth.omset;
+        if (av === null || bv === null) return av === null ? 1 : -1;
+        return av - bv;
+      });
+      const aggregateMeta = ResultBaseline.aggregate(scope || {});
+      return { context: ctx, level: levelOf(scope || {}), childLevel: CHILD_OF[levelOf(scope || {})],
+               childLabel: LEVEL_LABEL[CHILD_OF[levelOf(scope || {})]], rows: curRows,
+               baseline: aggregateMeta, header: ResultBaseline.header(aggregateMeta, ctx.currentLabel) };
+    }
     const prevBy = {}; prevRows.forEach(function (r) { prevBy[r.key] = r.metrics; });
     curRows.forEach(function (r) {
       const p = prevBy[r.key] || aggregateResult([]); r.previous = p;
@@ -5023,7 +5318,8 @@ const DashboardService = (function (DP) {
       return av - bv;
     });
     return { context: ctx, level: levelOf(scope || {}), childLevel: CHILD_OF[levelOf(scope || {})],
-             childLabel: LEVEL_LABEL[CHILD_OF[levelOf(scope || {})]], rows: curRows };
+             childLabel: LEVEL_LABEL[CHILD_OF[levelOf(scope || {})]], rows: curRows,
+             baseline: null, header: null };
   }
   function getResultEceran(scope) {
     const ctx = resultContext();
@@ -5421,11 +5717,14 @@ const DashboardService = (function (DP) {
         }
       });
 
-      /* AVG MTD = agregasi ulang seluruh record MTD (weighted, bukan rata-rata persentase harian) */
+      /* V1.7.7.7 — daily cells tetap raw existing. Hanya AVG MTD memakai
+         authority yang sama dengan KPI Summary MTD (1 Depo = 1 suara). */
       rows.forEach(function (row) {
         const recs = bag[row.key];
-        if (!recs || !recs.length) return;
-        const m = aggregate(recs);
+        const raw = recs && recs.length ? aggregate(recs) : aggregate([]);
+        const useAuthority = ProcessSummary.appliesTo(row.scope, 'mtd');
+        if ((!recs || !recs.length) && !useAuthority) return;
+        const m = useAuthority ? ProcessSummary.merge(raw, row.scope, 'mtd') : raw;
         row.mtdMetrics = m;
         const v = metric.value(m);
         row.mtd = (v === null || v === undefined || isNaN(v)) ? null : v;
@@ -5446,14 +5745,17 @@ const DashboardService = (function (DP) {
         const v = m.n ? metric.value(m) : null;
         totalDaily[d] = (v === null || v === undefined || isNaN(v)) ? null : v;
       });
-      const totalAgg = aggregate(DP.getRecords(range, scope));
+      const totalRaw = aggregate(DP.getRecords(range, scope));
+      const totalAgg = ProcessSummary.appliesTo(scope, 'mtd')
+        ? ProcessSummary.merge(totalRaw, scope, 'mtd') : totalRaw;
 
       return {
         level: lvl, childLevel: childLevel, childLabel: LEVEL_LABEL[childLevel],
         metric: metric, metrics: DAILY_METRICS,
         dates: dates, range: range, today: today,
         rows: rows,
-        total: { values: totalDaily, mtd: totalAgg.n ? metric.value(totalAgg) : null, metrics: totalAgg },
+        total: { values: totalDaily,
+          mtd: (totalAgg.n || totalAgg.__summary) ? metric.value(totalAgg) : null, metrics: totalAgg },
         noDataCount: rows.filter(function (r) { return r.mtd === null; }).length
       };
     },
@@ -5525,7 +5827,9 @@ const DashboardService = (function (DP) {
     getResultSalesmanDetail: getResultSalesmanDetail,
 
     /* ===== V1.6 — akses yang dipakai RankingService (tanpa menghitung ulang metric) ===== */
-    rawRecords: function (range, scope) { return DP.getRecords(range, scope || {}); },
+    rawRecords: function (range, scope) {
+      return (typeof DP.getRankingRecords === 'function' ? DP.getRankingRecords(range, scope || {}) : DP.getRecords(range, scope || {}));
+    },
     /* V1.7.7 — dibuka untuk audit/regression, BUKAN dipakai Ranking. */
     processSummaryMetrics: function (scope, periodKey) { return ProcessSummary.metricsFor(scope || {}, periodKey || 'mtd'); },
     processSummaryAvailable: function (scope, periodKey) { return ProcessSummary.appliesTo(scope || {}, periodKey || 'mtd'); },
@@ -5535,8 +5839,9 @@ const DashboardService = (function (DP) {
        Hasil Kerja pada Ranking akan kosong. Rule target coverage / target
        unavailable tetap milik aggregateResultMtd (tidak diubah). */
     rawResultRecords: function (range, scope) {
-      if (isLiveMode() && typeof DP.getResultMtdRecords === 'function')
-        return DP.getResultMtdRecords(scope || {});
+      if (isLiveMode() && typeof DP.getRankingResultMtdRecords === 'function')
+        return DP.getRankingResultMtdRecords(scope || {});
+      if (isLiveMode() && typeof DP.getResultMtdRecords === 'function') return DP.getResultMtdRecords(scope || {});
       return DP.getResultRecords(range, scope || {});
     },
     aggregateResultRecords: aggregateResult,
@@ -5672,10 +5977,12 @@ const InformationService = (function (Provider) {
   function hasValue(v) { return v !== null && v !== undefined && isFinite(Number(v)); }
   /* V1.6.6 — resolvedIdentity diterapkan SEBELUM keputusan scope: filtering memakai
      membership Depo hasil OrgResolver, bukan row.regional_code / row.branch_code. */
-  function inScope(row, scope) {
+  function inScope(row, scope, bypassInformationStatus, domain) {
     /* V1.7.2 — Menu Informasi mengikuti Monitoring Scope: Depo di luar Regional
        trial tidak ditampilkan dan tidak ikut menentukan HK TERBARU. */
     if (typeof MonitoringScope !== 'undefined' && !MonitoringScope.isDepotAllowed(row.depot_code)) return false;
+    if (!bypassInformationStatus && !MasterCabangAuthority.allowed(row.depot_code, 'informasi')) return false;
+    if (domain === 'ranking' && !MasterCabangAuthority.allowed(row.depot_code, 'ranking')) return false;
     if (scope.depot && row.depot_code !== scope.depot) return false;
     if ((scope.regional || scope.branch) && typeof OrgResolver !== 'undefined' &&
         !OrgResolver.matchesScope(row.depot_code, scope)) return false;
@@ -5685,11 +5992,15 @@ const InformationService = (function (Provider) {
     /* OrgResolver adalah pemetaan organisasi existing dan sudah terinisialisasi
        sebelum fungsi ini dipanggil oleh renderer. Fallback selalu data provider. */
     const mapped = typeof OrgResolver !== 'undefined' ? OrgResolver.resolve(row.depot_code) : null;
+    function prefixed(v, prefix) {
+      const s = String(v || '').trim(); if (!s) return '';
+      return new RegExp('^' + prefix + '\\b', 'i').test(s) ? s : prefix + ' ' + s;
+    }
     return Object.assign({}, row, {
       regional_code_display: mapped && mapped.regional_code ? mapped.regional_code : row.regional_code,
       regional_name_display: mapped && mapped.regional_name ? mapped.regional_name : row.regional_name,
-      branch_name_display: mapped && mapped.branch_name ? mapped.branch_name : row.branch_name,
-      depot_name_display: mapped && mapped.depot_name ? mapped.depot_name : row.depot_name
+      branch_name_display: prefixed(mapped && mapped.branch_name ? mapped.branch_name : row.branch_name, 'Cabang'),
+      depot_name_display: prefixed(mapped && mapped.depot_name ? mapped.depot_name : row.depot_name, 'Depo')
     });
   }
   function compare(a, b) {
@@ -5717,8 +6028,10 @@ const InformationService = (function (Provider) {
       .map(function (r) { return Number(r[key]); });
     return values.length ? Math.max.apply(Math, values) : null;
   }
-  function getSnapshot(scope) {
-    const rows = Provider.getLatestByDepot().filter(function (r) { return inScope(r, scope || {}); })
+  function getSnapshot(scope, options) {
+    const bypass = !!(options && options.bypassInformationStatus);
+    const domain = options && options.domain;
+    const rows = Provider.getLatestByDepot().filter(function (r) { return inScope(r, scope || {}, bypass, domain); })
       .map(function (r) {
         const out = resolvedIdentity(r);
         const complete = hasValue(out.process_hk) && hasValue(out.result_hk);
@@ -5789,7 +6102,8 @@ const InformationService = (function (Provider) {
              processPeriod: processPeriod, resultPeriod: resultPeriod,
              scope: Object.assign({}, scope || {}), providerMode: Provider.mode };
   }
-  return { getSnapshot: getSnapshot };
+  return { getSnapshot: getSnapshot,
+    getSnapshotForTat: function (scope) { return getSnapshot(scope || {}, { bypassInformationStatus: true, domain: 'ranking' }); } };
 })(ProviderHub.infoFacade);
 /* ============================================================================
    LAYER 6 — APP STATE
@@ -6428,8 +6742,9 @@ const Renderer = (function (S) {
 
     const note = '<div class="note-inline" style="padding:9px 0 0">' +
       'Tabel ini <b>selalu menampilkan bulan berjalan</b> dan tidak terpengaruh filter Periode (Hari Ini / 7 Hari); ' +
-      'filter Regional/Cabang/Depo tetap berlaku. AVG MTD dihitung dari total denominator sebulan ' +
-      '(mis. total SC ÷ total JKS), bukan rata-rata persentase harian. Urutan baris: AVG MTD terburuk lebih dulu' +
+      'filter Regional/Cabang/Depo tetap berlaku. AVG MTD memakai authority yang sama dengan KPI Summary MTD: ' +
+      '<b>process_period_summary.mtd</b>, fallback <b>process_depot_summary</b>, dan parent rata-rata antar Depo valid. ' +
+      'Urutan baris: AVG MTD terburuk lebih dulu' +
       (dm.noDataCount ? '; ' + dm.noDataCount + ' unit tanpa data ditempatkan paling bawah.' : '.') + '</div>';
 
     return '<section class="section" id="dailySection">' +
@@ -6863,9 +7178,16 @@ const Renderer = (function (S) {
         '<td>' + U.int(p.roa) + '</td><td>' + U.int(c.roa) + '</td><td>' + rGrowth(r.growth.roa) + '</td>' +
         '<td>' + U.int(p.ec) + '</td><td>' + U.int(c.ec) + '</td><td>' + rGrowth(r.growth.ec) + '</td></tr>';
     }).join('');
+    const baseLabel = data.header ? data.header.baselineLabel : 'Baseline';
+    const distribution = data.header && data.header.distribution
+      ? '<div class="ach-note"><b>Baseline Campuran:</b> ' + U.esc(data.header.distribution) + '</div>' : '';
+    const coverage = data.header && data.header.coverage
+      ? '<div class="ach-note"><b>Baseline Coverage:</b> ' + U.esc(data.header.coverage) + '</div>' : '';
+    const grainNote = (data.level === 'depot' || data.level === 'ass' || data.level === 'salesman')
+      ? '<div class="ach-note"><b>Grain Baseline:</b> comparison historical authoritative tersedia sampai level Depo. Baris ASS/Salesman tidak memiliki baseline dan ditampilkan sebagai “–”.</div>' : '';
     return '<div class="result-table-wrap" data-dsrc="result_detail_mtd"><table class="rtbl" style="min-width:1050px"><thead><tr><th>' + U.esc(data.childLabel) +
-      '</th><th>Omset LM</th><th>Real Omset</th><th>Growth</th><th>ROA LM</th><th>ROA</th><th>Growth</th><th>EC LM</th><th>EC</th><th>Growth</th></tr></thead><tbody>' + rows + '</tbody></table></div>' +
-      '<div class="ach-note">LM = Bulan Lalu pada HK yang sama.</div>';
+      '</th><th>Omset ' + U.esc(baseLabel) + '</th><th>Real Omset</th><th>Growth</th><th>ROA ' + U.esc(baseLabel) + '</th><th>ROA</th><th>Growth</th><th>EC ' + U.esc(baseLabel) + '</th><th>EC</th><th>Growth</th></tr></thead><tbody>' + rows + '</tbody></table></div>' +
+      distribution + coverage + grainNote + '<div class="ach-note">Baseline mengikuti slot M-1 authoritative per Depo dari Website ASS; Depo tanpa baseline tidak dianggap nol.</div>';
   }
   function renderResultEceran(data) {
     function table(type) {
@@ -6885,7 +7207,7 @@ const Renderer = (function (S) {
       return '<div class="result-subcard"><div class="result-subcard-head">MTD ' + (isRoa ? 'ROA' : 'Point EPB') +
         ' per Eceran</div><div class="result-table-wrap"><table class="rtbl ecr-tbl">' + cols +
         '<thead><tr><th>Rank</th><th>Produk /<br>Eceran</th><th>' +
-        (isRoa ? 'ROA<br>LM' : 'Point<br>LM') + '</th><th>' + (isRoa ? 'ROA' : 'Point<br>EPB') +
+        (isRoa ? 'ROA<br>Baseline' : 'Point<br>Baseline') + '</th><th>' + (isRoa ? 'ROA' : 'Point<br>EPB') +
         '</th><th>Growth</th><th>Plus /<br>Minus</th></tr></thead><tbody>' + body + '</tbody></table></div></div>';
     }
     return '<div class="result-eceran-grid">' + table('roa') + table('epb') + '</div>' +
@@ -7010,9 +7332,9 @@ const Renderer = (function (S) {
           (trend.source === 'RESULT_DAILY_DEPOT_V2'
             ? ' · Tanggal Order · ' + U.esc(trend.totalDepotNote) : ''),
           '<div id="resultTrendHost"></div>') +
-        UI.section('Detail MTD', U.esc(ctx.currentLabel) + ' HK' + ctx.hk + ' vs ' + U.esc(ctx.previousLabel) + ' HK' + ctx.previousHk,
+        UI.section('Detail MTD', U.esc(detail.header ? detail.header.title : (ctx.currentLabel + ' HK' + (ctx.hk === null ? '–' : ctx.hk) + ' vs Baseline belum tersedia')),
           renderResultDetail(detail)) +
-        UI.section('MTD per Eceran', U.esc(ctx.currentLabel) + ' HK' + ctx.hk + ' vs ' + U.esc(ctx.previousLabel) + ' HK' + ctx.previousHk,
+        UI.section('MTD per Eceran', U.esc(ctx.currentLabel) + ' HK' + (ctx.hk === null ? '–' : ctx.hk) + ' · Baseline per Eceran belum tersedia',
           renderResultEceran(eceran)) +
         UI.section('Kontribusi Omset', 'Kontribusi ' + U.esc(contribution.childLevel ? S.levelLabel(contribution.childLevel) : '') + ' terhadap ' + U.esc(scopeName()),
           renderResultContribution(contribution));
@@ -7092,9 +7414,10 @@ const Renderer = (function (S) {
       const data = InformationService.getSnapshot(AppState.scope);
       const body = data.rows.length ? data.rows.map(function (r) {
         const regional = [r.regional_code_display, r.regional_name_display].filter(Boolean).join(' ');
-        const org = [r.branch_name_display, r.depot_name_display].filter(Boolean).join(' / ') || r.depot_code;
+        const cabang = r.branch_name_display || '–', depo = r.depot_name_display || r.depot_code || '–';
         return '<tr><td class="info-regional" title="' + U.esc(regional) + '">' + U.esc(regional || '–') + '</td>' +
-          '<td class="info-org" title="' + U.esc(org) + '">' + U.esc(org || '–') + '</td>' +
+          '<td class="info-org" title="' + U.esc(cabang) + '">' + U.esc(cabang) + '</td>' +
+          '<td class="info-org" title="' + U.esc(depo) + '">' + U.esc(depo) + '</td>' +
           '<td class="info-hk-cell' + infoCue(r.process_hk, data.maxProcessHK) + '" title="' +
             U.esc(r.process_hk === null || r.process_hk === undefined ? 'Belum ada data Proses Kerja' :
               'Proses Kerja ' + (infoPeriodLabel(r.process_period_month) || '') + ' HK ' + r.process_hk +
@@ -7107,7 +7430,7 @@ const Renderer = (function (S) {
               ' · upload ' + infoUploadLabel(r.result_uploaded_at) +
               (r.result_status ? ' · ' + r.result_status.label : '')) + '">' +
             infoCell(r.result_hk, r.result_uploaded_at, data.maxResultHK, r.result_period_month, r.result_status) + '</td></tr>';
-      }).join('') : '<tr><td colspan="4">' + UI.empty('Tidak Ada Data', 'Tidak ada metadata update pada scope aktif.') + '</td></tr>';
+      }).join('') : '<tr><td colspan="5">' + UI.empty('Tidak Ada Data', 'Tidak ada metadata update pada scope aktif.') + '</td></tr>';
 
       host.innerHTML = '<div class="info-summary" aria-label="Ringkasan HK terbaru pada scope aktif">' +
         '<section class="info-summary-card"><div class="info-summary-stream">Proses Kerja' +
@@ -7125,8 +7448,8 @@ const Renderer = (function (S) {
         '<section class="info-section"><div class="info-section-head"><span class="info-section-title">Update per Depo</span>' +
           '<span class="info-section-meta">' + U.esc(scopeName()) + ' · ' + U.int(data.rows.length) + ' Depo</span></div>' +
           '<div class="info-table-wrap"><table class="info-table"><colgroup>' +
-            '<col style="width:18%"><col style="width:32%"><col style="width:25%"><col style="width:25%"></colgroup>' +
-            '<thead><tr><th>Regional</th><th>Cabang / Depo</th><th>Proses Kerja</th><th>Hasil Kerja</th></tr></thead>' +
+            '<col style="width:16%"><col style="width:19%"><col style="width:21%"><col style="width:22%"><col style="width:22%"></colgroup>' +
+            '<thead><tr><th>Regional</th><th>Cabang</th><th>Depo</th><th>Proses</th><th>Hasil</th></tr></thead>' +
             '<tbody>' + body + '</tbody></table></div>' +
           '<div class="note-inline">Status dihitung terhadap <b>HK tertinggi</b> pada periode masing-masing domain: ' +
           '<b>Update</b> bila sama dengan HK tertinggi, <b>Tertinggal X HK</b> bila di bawahnya, dan ' +
@@ -7412,7 +7735,7 @@ const Renderer = (function (S) {
     result_detail_mtd: {
       domain: 'hasil', label: 'Detail MTD',
       build: function (scope) { return renderResultDetail(S.getResultDetail(scope)); },
-      note: 'LM = Bulan Lalu pada HK yang sama.'
+      note: 'Baseline mengikuti authority Website ASS; pembanding tidak ditebak dari kalender.'
     },
     ranking_main: {
       domain: 'ranking', label: 'Ranking',
@@ -7532,7 +7855,8 @@ const Detail = {
       Detail.cell('Avg EC', U.dec(c.avg_ec, 1)) +
       Detail.cell('Point EPB', U.dec(c.epb_point, 1)) + '</div>';
     const compare = '<div class="table-wrap"><table class="ev-table"><thead><tr><th>Metrik</th><th>' +
-      U.esc(ctx.currentLabel + ' HK ' + ctx.hk) + '</th><th>' + U.esc(ctx.previousLabel + ' HK ' + ctx.previousHk) +
+      U.esc(ctx.currentLabel + ' HK ' + (ctx.hk === null ? '–' : ctx.hk)) + '</th><th>' +
+      U.esc(ctx.baselineAvailable ? (ctx.previousLabel + (ctx.previousHk === null ? '' : ' HK ' + ctx.previousHk)) : 'Baseline belum tersedia') +
       '</th><th>Growth</th></tr></thead><tbody>' +
       '<tr><td style="text-align:left">Omset</td><td>' + money(c.omset) + '</td><td>' + money(p.omset) + '</td><td>' + growth(d.growth.omset) + '</td></tr>' +
       '<tr><td style="text-align:left">ROA</td><td>' + U.int(c.roa) + '</td><td>' + U.int(p.roa) + '</td><td>' + growth(d.growth.roa) + '</td></tr>' +
@@ -8097,7 +8421,7 @@ const RankingTat = {
     };
 
     let snap = null;
-    try { snap = InformationService.getSnapshot({}); } catch (e) { snap = null; }
+    try { snap = InformationService.getSnapshotForTat({}); } catch (e) { snap = null; }
     if (snap) {
       out.periodMonth = RankingPeriodSettings.monthKey(snap.resultPeriod);
       out.hkRunning = (snap.maxResultHK === null || snap.maxResultHK === undefined)
@@ -9110,13 +9434,17 @@ const OrgResolver = {
   getFilterOptions: function (scope) {
     const g = this.graph(), sc = scope || {};
     /* Dropdown Regional hanya menampilkan Regional di dalam Monitoring Scope. */
-    const regionals = g.regionals.filter(function (r) { return MonitoringScope.isRegionalAllowed(r.code); })
+    const regionals = g.regionals.filter(function (r) { return MonitoringScope.isRegionalAllowed(r.code) &&
+        MasterCabangAuthority.scopeHasAllowed({ regional: r.code }, 'monitoring'); })
       .map(function (r) { return { code: r.code, label: OrgResolver.regionalLabel(r) }; });
     const branches = sc.regional
-      ? (g.branchesOfRegional[sc.regional] || []).map(function (b) { return { code: b.code, label: b.name }; })
+      ? (g.branchesOfRegional[sc.regional] || []).filter(function (b) {
+          return MasterCabangAuthority.scopeHasAllowed({ regional: b.regional_code, branch: b.code }, 'monitoring');
+        }).map(function (b) { return { code: b.code, label: b.name }; })
       : [];
     const depots = sc.branch
-      ? (g.depotsOfBranch[sc.branch] || []).filter(function (d) { return !sc.regional || d.regional_code === sc.regional; })
+      ? (g.depotsOfBranch[sc.branch] || []).filter(function (d) { return (!sc.regional || d.regional_code === sc.regional) &&
+            MasterCabangAuthority.allowed(d.code, 'monitoring'); })
           .map(function (d) { return { code: d.code, label: d.name }; })
       : [];
     return { regionals: regionals, branches: branches, depots: depots };
@@ -9259,8 +9587,10 @@ const RankingService = (function (S) {
      memakai range konteks HASIL; pada LIVE hal itu membuat seluruh KPI Proses
      Kerja kosong karena tanggal PROSES berada di luar range cutoff RESULT. */
   function entityMetrics(scope, range, procRange) {
-    const proc = S.aggregate(S.rawRecords(procRange || range, scope));
-    const res  = S.aggregateResultRecords(S.rawResultRecords(range, scope));
+    const rankOnly = function (rows) { return (rows || []).filter(function (r) {
+      return MasterCabangAuthority.allowed(r.depot_code, 'ranking'); }); };
+    const proc = S.aggregate(rankOnly(S.rawRecords(procRange || range, scope)));
+    const res  = S.aggregateResultRecords(rankOnly(S.rawResultRecords(range, scope)));
     return {
       sc_jks_pct: proc.n ? proc.sc_jks_pct : null,          /* ON ROUTE  */
       geo_match_pct: proc.n ? proc.geo_match_pct : null,     /* ON ROUTE  */
@@ -9302,7 +9632,9 @@ const RankingService = (function (S) {
   }
 
   function buildRows(scope, level, range, tat, procRange) {
-    const kids = S.childrenAt(scope, level);
+    const kids = S.childrenAt(scope, level).filter(function (c) {
+      return MasterCabangAuthority.scopeHasAllowed(c.scope, 'ranking');
+    });
     return kids.map(function (c) {
       const m = entityMetrics(c.scope, range, procRange);
       const sc = scoreRow(m, tat);
@@ -10387,6 +10719,356 @@ const RankingMasterView = {
   tab: function () { return this.card() + this.preview(); }
 };
 
+/* V1.7.7.8 — workflow governance: Download → Upload → Validate → Preview → Confirm → Apply. */
+const MasterControlIO = {
+  _applying: false,
+  HEADERS: ['KODE DEPO','REGIONAL','CABANG','DEPO','STATUS MONITORING','STATUS RANKING','STATUS INFORMASI'],
+
+  normalizeHeader: function (v) {
+    return String(v || '').trim().toUpperCase().replace(/[_-]+/g, ' ').replace(/\s+/g, ' ');
+  },
+
+  cleanText: function (v) {
+    return String(v === null || v === undefined ? '' : v).trim().replace(/\s+/g, ' ');
+  },
+
+  sameText: function (a, b) {
+    return this.cleanText(a).toUpperCase() === this.cleanText(b).toUpperCase();
+  },
+
+  parseRegional: function (v) {
+    const s = this.cleanText(v);
+    const m = s.match(/^(R\d{2})\s+(.+)$/i);
+    return m
+      ? { code: String(m[1]).toUpperCase(), name: this.cleanText(m[2]) }
+      : { code: '', name: s };
+  },
+
+  parseBranch: function (v) {
+    const s = this.cleanText(v);
+    const m = s.match(/^(R\d{2}\.\d{2})\s+(.+)$/i);
+    return m
+      ? { code: String(m[1]).toUpperCase(), name: this.cleanText(m[2]) }
+      : { code: '', name: s };
+  },
+
+  formatRegional: function (r) {
+    const code = this.cleanText(r && r.regional_code).toUpperCase();
+    const name = this.cleanText(r && r.regional_name);
+    return [code, name].filter(Boolean).join(' ').trim();
+  },
+
+  formatBranch: function (r) {
+    const code = this.cleanText(r && r.branch_code).toUpperCase();
+    const name = this.cleanText(r && r.branch_name);
+    return [code, name].filter(Boolean).join(' ').trim();
+  },
+
+  download: function () {
+    const self = this;
+    const xl = function (v) {
+      const s = String(v === null || v === undefined ? '' : v);
+      return /^[=+\-@]/.test(s) ? "'" + s : s;
+    };
+
+    const rows = MasterCabangAuthority.rows.map(function (r) {
+      return {
+        'KODE DEPO': xl(r.depot_code),
+        /* V1.7.7.7: export hierarchy authority lengkap agar round-trip Excel
+           tidak membuang regional_code / branch_code. */
+        'REGIONAL': xl(self.formatRegional(r)),
+        'CABANG': xl(self.formatBranch(r)),
+        'DEPO': xl(r.depot_name || ''),
+        'STATUS MONITORING': MasterCabangAuthority.status(r.depot_code, 'monitoring'),
+        'STATUS RANKING': MasterCabangAuthority.status(r.depot_code, 'ranking'),
+        'STATUS INFORMASI': MasterCabangAuthority.status(r.depot_code, 'informasi')
+      };
+    });
+
+    return MasterCabangIO.loadXlsx().then(function (X) {
+      const ws = X.utils.json_to_sheet(rows, { header: MasterControlIO.HEADERS });
+      ws['!cols'] = [{wch:16},{wch:24},{wch:30},{wch:28},{wch:20},{wch:18},{wch:20}];
+      const wb = X.utils.book_new();
+      X.utils.book_append_sheet(wb, ws, 'MASTER CABANG');
+      X.writeFile(wb, 'Master-Cabang-Saat-Ini-' + U.wibNowDate() + '.xlsx');
+      return rows.length;
+    });
+  },
+
+  validate: function (matrix) {
+    const out = {
+      ok: false,
+      valid: false,
+      rows: [],
+      changes: [],
+      unchanged: [],
+      invalid: [],
+      missing: [],
+      errors: []
+    };
+
+    if (!matrix || !matrix.length) {
+      out.errors.push('File kosong atau tidak terbaca.');
+      return out;
+    }
+
+    let at = -1, idx = {};
+    for (let i = 0; i < Math.min(15, matrix.length); i++) {
+      const norm = (matrix[i] || []).map(this.normalizeHeader);
+      const test = {};
+      this.HEADERS.forEach(function (h) { test[h] = norm.indexOf(h); });
+      if (this.HEADERS.every(function (h) { return test[h] >= 0; })) {
+        at = i;
+        idx = test;
+        break;
+      }
+    }
+
+    if (at < 0) {
+      out.errors.push('Header wajib tidak lengkap. Gunakan file hasil Download Master Saat Ini.');
+      return out;
+    }
+
+    const seen = {};
+    const self = this;
+
+    for (let n = at + 1; n < matrix.length; n++) {
+      const r = matrix[n] || [];
+      const line = n + 1;
+
+      if (!r.some(function (v) { return String(v || '').trim(); })) continue;
+
+      const code = LiveNormalize.code(r[idx['KODE DEPO']]);
+      if (!code) {
+        out.invalid.push({ line: line, message: 'Kode Depo kosong.' });
+        continue;
+      }
+
+      if (seen[code]) {
+        out.invalid.push({ line: line, code: code, message: 'Kode Depo duplikat.' });
+        continue;
+      }
+      seen[code] = 1;
+
+      const current = MasterCabangAuthority.byDepot[code];
+      if (!current) {
+        out.invalid.push({ line: line, code: code, message: 'Kode Depo tidak dikenal.' });
+        continue;
+      }
+
+      const regionalRaw = self.parseRegional(r[idx['REGIONAL']]);
+      const branchRaw = self.parseBranch(r[idx['CABANG']]);
+      const depotName = self.cleanText(r[idx['DEPO']]);
+
+      if (!regionalRaw.name || !branchRaw.name || !depotName) {
+        out.invalid.push({
+          line: line,
+          code: code,
+          message: 'REGIONAL, CABANG, dan DEPO wajib terisi.'
+        });
+        continue;
+      }
+
+      /* Backward compatible:
+         - File baru: "R02 SUMBAR" / "R02.01 PADANG" -> code + name authority.
+         - File lama: "SUMBAR" / "PADANG" -> nama tetap dapat divalidasi,
+           sedangkan code menggunakan authority current agar tidak hilang. */
+      const desiredRegionalCode = regionalRaw.code ||
+        self.cleanText(current.regional_code).toUpperCase();
+      const desiredBranchCode = branchRaw.code ||
+        self.cleanText(current.branch_code).toUpperCase();
+
+      if (desiredRegionalCode && !/^R\d{2}$/.test(desiredRegionalCode)) {
+        out.invalid.push({
+          line: line,
+          code: code,
+          message: 'Kode Regional tidak valid. Format contoh: R02 SUMBAR.'
+        });
+        continue;
+      }
+
+      if (desiredBranchCode && !/^R\d{2}\.\d{2}$/.test(desiredBranchCode)) {
+        out.invalid.push({
+          line: line,
+          code: code,
+          message: 'Kode Cabang tidak valid. Format contoh: R02.01 PADANG.'
+        });
+        continue;
+      }
+
+      if (desiredRegionalCode && desiredBranchCode &&
+          desiredBranchCode.slice(0, 3) !== desiredRegionalCode) {
+        out.invalid.push({
+          line: line,
+          code: code,
+          message: 'Kode Cabang tidak konsisten dengan Kode Regional.'
+        });
+        continue;
+      }
+
+      const raw = {
+        regional_code: desiredRegionalCode,
+        regional_name: regionalRaw.name,
+        branch_code: desiredBranchCode,
+        branch_name: branchRaw.name,
+        depot_name: depotName,
+        status_monitoring: self.cleanText(r[idx['STATUS MONITORING']]).toUpperCase(),
+        status_ranking: self.cleanText(r[idx['STATUS RANKING']]).toUpperCase(),
+        status_informasi: self.cleanText(r[idx['STATUS INFORMASI']]).toUpperCase()
+      };
+
+      const bad = ['status_monitoring','status_ranking','status_informasi'].filter(function (k) {
+        return ['AKTIF','TAKE OUT'].indexOf(raw[k]) < 0;
+      });
+
+      if (bad.length) {
+        out.invalid.push({
+          line: line,
+          code: code,
+          message: 'Status hanya boleh AKTIF atau TAKE OUT.'
+        });
+        continue;
+      }
+
+      const before = {
+        regional_code: self.cleanText(current.regional_code).toUpperCase(),
+        regional_name: self.cleanText(current.regional_name),
+        branch_code: self.cleanText(current.branch_code).toUpperCase(),
+        branch_name: self.cleanText(current.branch_name),
+        depot_name: self.cleanText(current.depot_name),
+        status_monitoring: MasterCabangAuthority.status(code, 'monitoring'),
+        status_ranking: MasterCabangAuthority.status(code, 'ranking'),
+        status_informasi: MasterCabangAuthority.status(code, 'informasi')
+      };
+
+      const changed =
+        before.regional_code !== raw.regional_code ||
+        !self.sameText(before.regional_name, raw.regional_name) ||
+        before.branch_code !== raw.branch_code ||
+        !self.sameText(before.branch_name, raw.branch_name) ||
+        !self.sameText(before.depot_name, raw.depot_name) ||
+        before.status_monitoring !== raw.status_monitoring ||
+        before.status_ranking !== raw.status_ranking ||
+        before.status_informasi !== raw.status_informasi;
+
+      const item = {
+        depot_code: code,
+        regional: raw.regional_name || before.regional_name || before.regional_code || '',
+        branch: raw.branch_name || before.branch_name || before.branch_code || '',
+        depot: raw.depot_name || before.depot_name || code,
+        before: before,
+        after: raw
+      };
+
+      (changed ? out.changes : out.unchanged).push(item);
+      out.rows.push(item);
+    }
+
+    /* Row yang tidak ada di file = NO CHANGE. Jangan delete / Take Out. */
+    MasterCabangAuthority.rows.forEach(function (r) {
+      const code = LiveNormalize.code(r && r.depot_code);
+      if (code && !seen[code]) out.missing.push(code);
+    });
+
+    if (out.invalid.length) {
+      out.errors.push(out.invalid.length + ' baris invalid. Tidak ada perubahan yang akan diterapkan.');
+    }
+
+    out.valid = out.errors.length === 0;
+    out.ok = out.valid && out.changes.length > 0;
+    return out;
+  }
+};
+
+/* Override view lama tanpa mengubah shell/menu Ranking existing. */
+RankingMasterView.card = function () {
+  const rows = MasterCabangAuthority.rows, active = rows.filter(function (r) {
+    return MasterCabangAuthority.status(r.depot_code,'monitoring') === 'AKTIF'; }).length;
+  const table = rows.slice(0, 200).map(function (r) {
+    function badge(s) { return '<span class="master-status ' + (s === 'TAKE OUT' ? 'takeout' : 'active') + '">' + U.esc(s) + '</span>'; }
+    return '<tr><td>' + U.esc(r.regional_name || r.regional_code || '–') + '</td><td>' +
+      U.esc(r.branch_name || r.branch_code || '–') + '</td><td>' + U.esc(r.depot_code) + '</td><td>' +
+      U.esc(r.depot_name || '–') + '</td><td>' + badge(MasterCabangAuthority.status(r.depot_code,'monitoring')) +
+      '</td><td>' + badge(MasterCabangAuthority.status(r.depot_code,'ranking')) + '</td><td>' +
+      badge(MasterCabangAuthority.status(r.depot_code,'informasi')) + '</td></tr>';
+  }).join('');
+  return UI.section('Master Cabang Nasional', 'Control authority pusat · identity Kode Depo',
+    '<div class="mgrid"><div class="mcell"><div class="mcell-l">Total Depo</div><div class="mcell-v">' + U.int(rows.length) +
+    '</div></div><div class="mcell"><div class="mcell-l">Monitoring Aktif</div><div class="mcell-v">' + U.int(active) +
+    '</div></div></div><div class="master-actions"><button class="btn-ghost" data-act="master-download">Download Master Saat Ini</button>' +
+    '<label class="btn-primary rk-file">Upload Master<input type="file" id="masterControlFile" accept=".xlsx,.xls" hidden></label></div>' +
+    '<div class="dd-note">Upload digunakan untuk validasi dan preview perubahan <b>Regional, Cabang, Depo, serta Status</b>. Setelah preview valid, tombol <b>Terapkan</b> akan memperbarui Master Cabang Supabase secara transactional. Row yang tidak ada di file berarti <b>NO CHANGE</b>. TAKE OUT tidak menghapus data atau history.</div>' +
+    '<div class="result-table-wrap"><table class="rtbl"><thead><tr><th>Regional</th><th>Cabang</th><th>Kode Depo</th><th>Depo</th><th>Status Monitoring</th><th>Status Ranking</th><th>Status Informasi</th></tr></thead><tbody>' +
+    (table || '<tr><td colspan="7">Master belum tersedia</td></tr>') + '</tbody></table></div>' +
+    (rows.length > 200 ? '<div class="dd-note">Tabel menampilkan 200 Depo pertama. Download XLSX memuat seluruh Depo.</div>' : ''));
+};
+RankingMasterView.preview = function () {
+  const p = this._preview;
+  if (!p) return '';
+
+  const v = p.result;
+
+  const list = v.changes.map(function (r) {
+    function diffText(before, after, label) {
+      const b = String(before === null || before === undefined ? '' : before).trim();
+      const a = String(after === null || after === undefined ? '' : after).trim();
+      if (b.toUpperCase() === a.toUpperCase()) return '';
+      return '<div><b>' + label + ':</b> ' + U.esc(b || '–') + ' → ' + U.esc(a || '–') + '</div>';
+    }
+
+    function fmt(code, name) {
+      return [String(code || '').trim(), String(name || '').trim()].filter(Boolean).join(' ');
+    }
+
+    const d =
+      diffText(fmt(r.before.regional_code, r.before.regional_name),
+               fmt(r.after.regional_code, r.after.regional_name), 'Regional') +
+      diffText(fmt(r.before.branch_code, r.before.branch_name),
+               fmt(r.after.branch_code, r.after.branch_name), 'Cabang') +
+      diffText(r.before.depot_name, r.after.depot_name, 'Depo') +
+      diffText(r.before.status_monitoring, r.after.status_monitoring, 'Monitoring') +
+      diffText(r.before.status_ranking, r.after.status_ranking, 'Ranking') +
+      diffText(r.before.status_informasi, r.after.status_informasi, 'Informasi');
+
+    return '<tr><td>UPDATED</td><td>' + U.esc(r.depot_code) + '</td><td>' +
+      U.esc(r.after.depot_name || r.depot || '–') + '</td><td class="master-diff">' +
+      (d || '–') + '</td></tr>';
+  }).concat(v.invalid.map(function (r) {
+    return '<tr><td>INVALID</td><td>' + U.esc(r.code || '–') + '</td><td>Baris ' +
+      U.int(r.line) + '</td><td>' + U.esc(r.message) + '</td></tr>';
+  })).join('');
+
+  let subtitle = 'Belum dapat diterapkan';
+  if (v.valid && v.changes.length) subtitle = 'Valid · ' + U.int(v.changes.length) +
+    ' perubahan · Siap diterapkan ke Supabase';
+  else if (v.valid) subtitle = 'Valid · Tidak ada perubahan';
+
+  return UI.section(
+    'Preview Perubahan — ' + U.esc(p.fileName),
+    subtitle,
+    '<div class="mgrid">' +
+      '<div class="mcell"><div class="mcell-l">UPDATED</div><div class="mcell-v">' + U.int(v.changes.length) + '</div></div>' +
+      '<div class="mcell"><div class="mcell-l">UNCHANGED</div><div class="mcell-v">' + U.int(v.unchanged.length) + '</div></div>' +
+      '<div class="mcell"><div class="mcell-l">TIDAK ADA DI FILE · NO CHANGE</div><div class="mcell-v">' + U.int((v.missing || []).length) + '</div></div>' +
+      '<div class="mcell"><div class="mcell-l">INVALID</div><div class="mcell-v">' + U.int(v.invalid.length) + '</div></div>' +
+    '</div>' +
+    (v.errors.length ? '<div class="rk-warn">' + v.errors.map(U.esc).join('<br>') + '</div>' : '') +
+    ((v.missing || []).length
+      ? '<div class="dd-note">' + U.int(v.missing.length) +
+        ' Depo tidak ada di file upload dan diperlakukan sebagai <b>NO CHANGE</b>. Tidak dihapus dan tidak otomatis TAKE OUT.</div>'
+      : '') +
+    '<div class="result-table-wrap"><table class="rtbl"><thead><tr><th>Status</th><th>Kode Depo</th><th>Depo</th><th>Perubahan</th></tr></thead><tbody>' +
+      (list || '<tr><td colspan="4">Tidak ada perubahan.</td></tr>') +
+    '</tbody></table></div>' +
+    '<div class="rk-btnrow">' +
+      '<button class="btn-primary" data-act="master-confirm"' +
+        ((v.valid && v.changes.length && !MasterControlIO._applying) ? '' : ' disabled') + '>' +
+        (MasterControlIO._applying ? 'Menerapkan…' : 'Terapkan ke Supabase') + '</button>' +
+      '<button class="btn-ghost" data-act="master-cancel">Batal</button>' +
+    '</div>'
+  );
+};
+
 /* ---------------- shell menu Ranking ---------------- */
 const RankingShell = {
   TABS: [['ranking', 'Ranking'], ['analisis', 'Analisis KPI'], ['setting', 'Setting KPI'], ['master', 'Master Cabang'], ['project', 'Master Salesman']],
@@ -11323,6 +12005,53 @@ const Controller = {
           OrgResolver.setMaster(null); Controller.toast('Master Cabang dihapus'); Controller.applyOrgChange();
         });
       }
+      else if (act === 'master-download') {
+        MasterControlIO.download().then(function (n) { Controller.toast('Master XLSX diunduh · ' + n + ' Depo'); })
+          .catch(function (err) { Controller.toast('Download gagal: ' + err.message); });
+      }
+      else if (act === 'master-cancel') { RankingMasterView._preview = null; RankingShell.renderPreserveScroll(); }
+      else if (act === 'master-confirm') {
+        const pv = RankingMasterView._preview;
+        if (!pv || !pv.result || !pv.result.valid || !pv.result.changes.length || MasterControlIO._applying) return;
+
+        const changes = pv.result.changes.map(function (r) {
+          const a = r.after || {};
+          return {
+            depot_code: r.depot_code,
+            regional_code: a.regional_code,
+            regional_name: a.regional_name,
+            branch_code: a.branch_code,
+            branch_name: a.branch_name,
+            depot_name: a.depot_name,
+            status_monitoring: a.status_monitoring,
+            status_ranking: a.status_ranking,
+            status_informasi: a.status_informasi,
+            reason: 'MASTER_EXCEL_UPLOAD'
+          };
+        });
+
+        if (!window.confirm(
+          'Terapkan ' + changes.length + ' perubahan Master Cabang ke Supabase?\n\n' +
+          'Perubahan akan langsung menjadi authority Monitoring Pusat.\n' +
+          'Row yang tidak ada di file tetap NO CHANGE dan TAKE OUT tidak menghapus history.'
+        )) return;
+
+        MasterControlIO._applying = true;
+        RankingShell.renderPreserveScroll();
+        Controller.toast('Menerapkan ' + changes.length + ' perubahan Master Cabang…');
+
+        MasterCabangAuthority.apply(changes).then(function (d) {
+          RankingMasterView._preview = null;
+          MasterControlIO._applying = false;
+          Controller.toast('Master Cabang berhasil diperbarui · ' +
+            U.int((d && d.updated) || changes.length) + ' Depo');
+          Controller.applyOrgChange();
+        }).catch(function (err) {
+          MasterControlIO._applying = false;
+          Controller.toast('Apply Master Cabang gagal: ' + (err && err.message ? err.message : 'Unknown error'));
+          RankingShell.renderPreserveScroll();
+        });
+      }
       else if (act === 'project-master-save') {
         const pv = SalesmanProjectView._preview;
         if (!pv || !pv.result || !pv.result.ok) return;
@@ -11431,6 +12160,19 @@ const Controller = {
         }).catch(function (err) {
           RankingMasterView._preview = null;
           Controller.toast('Gagal membaca file: ' + err.message);
+          RankingShell.renderPreserveScroll();
+        });
+        return;
+      }
+      if (t0.id === 'masterControlFile') {
+        const f = t0.files && t0.files[0]; if (!f) return;
+        if (!/\.(xlsx|xls)$/i.test(f.name || '')) { Controller.toast('Format file harus XLSX atau XLS.'); return; }
+        Controller.toast('Memvalidasi ' + f.name + '…');
+        MasterCabangIO.readFile(f).then(function (matrix) {
+          RankingMasterView._preview = { fileName: f.name, result: MasterControlIO.validate(matrix) };
+          RankingShell.renderPreserveScroll();
+        }).catch(function (err) {
+          RankingMasterView._preview = null; Controller.toast('File tidak valid: ' + err.message);
           RankingShell.renderPreserveScroll();
         });
         return;
@@ -11547,6 +12289,15 @@ const Controller = {
     const self = this;
     self._liveStarted = true;
     return LiveLoader.bootstrap()
+      .then(function () {
+        /* Status governance dibaca dari backend terpisah. Kegagalan endpoint
+           tidak mematikan dashboard; payload bootstrap lama tetap AKTIF semua. */
+        return MasterCabangAuthority.refresh().catch(function (e) {
+          if (LiveDataStore.notes.indexOf('MASTER CONTROL · endpoint belum tersedia') < 0)
+            LiveDataStore.notes.push('MASTER CONTROL · endpoint belum tersedia');
+          return MasterCabangAuthority.rows;
+        });
+      })
       .then(function () {
         /* hierarchy Live berasal dari master_depot; master lokal tidak override */
         OrgResolver.invalidateLive();
