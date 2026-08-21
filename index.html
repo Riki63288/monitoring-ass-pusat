@@ -7,7 +7,12 @@
 <style>
 /* ============================================================
    PORTAL MONITORING ASS — PUSAT
-   Build Pusat V1.7.7.8  |  MASTER APPLY ENABLED
+   Build Pusat V1.7.7.9.2.1  |  MASTER SSOT PRODUCTION COMPATIBILITY
+   ---------------------------------------------------------------------------
+   V1.7.7.9.2.1 — MASTER CABANG SSOT SOURCE RESOLVER
+   - Kontrak autentikasi produksi dipertahankan untuk Read dan Apply.
+   - Preview rename menampilkan current/new name, alias historical, dan Plant current.
+   - Backend apply_master_cabang_ssot_v1 menjaga master + source-map secara atomic.
 
    V1.7.7.4 — PROCESS PERIOD AUTHORITY ROUTING
    A. KPI Summary PROSES membaca source_meta.process_period_summary V1 dari
@@ -1417,7 +1422,7 @@ table{ border-collapse:separate; border-spacing:0; width:100%; }
       <span class="hdr-clock" id="hdrClock"></span>
       <span class="badge-demo" id="demoBadge"
             title="Status sumber data Monitoring Pusat.">MEMUAT…</span>
-      <span class="badge-build">Build Pusat V1.7.7.8</span>
+      <span class="badge-build">Build Pusat V1.7.7.9.2.1</span>
     </div>
   </div>
   <nav class="app-nav" id="appNav" aria-label="Navigasi utama">
@@ -2288,10 +2293,9 @@ const LiveGateway = {
 /* V1.7.7.7 — gateway governance terpisah agar Read Gateway existing tidak
    di-overwrite. Token/auth mengikuti konfigurasi existing; service-role tetap
    hanya berada di Edge Function. */
-/* V1.7.7.8 — MASTER APPLY ENABLED.
-   User memilih workflow tanpa PIN/login. Write tetap hanya melalui Edge Function
-   + RPC transactional; service-role tidak pernah berada di HTML. */
-const MASTER_CONTROL_WRITE_ENABLED = true;
+/* V1.7.7.9.2.1 — preserve the production authentication contract. The server
+   validates the same configured token/session already used by production. */
+const MASTER_CONTROL_WRITE_ENABLED = MONITORING_PUSAT_CONFIG.AUTH_MODE === 'token';
 
 const MasterControlGateway = {
   functionUrl: function () {
@@ -10719,10 +10723,10 @@ const RankingMasterView = {
   tab: function () { return this.card() + this.preview(); }
 };
 
-/* V1.7.7.8 — workflow governance: Download → Upload → Validate → Preview → Confirm → Apply. */
+/* V1.7.7.9.2.1 — workflow governance: Download → Upload → Validate → Preview → Confirm → Apply. */
 const MasterControlIO = {
   _applying: false,
-  HEADERS: ['KODE DEPO','REGIONAL','CABANG','DEPO','STATUS MONITORING','STATUS RANKING','STATUS INFORMASI'],
+  HEADERS: ['KODE DEPO','REGIONAL','CABANG','DEPO','PLANT','STATUS MONITORING','STATUS RANKING','STATUS INFORMASI'],
 
   normalizeHeader: function (v) {
     return String(v || '').trim().toUpperCase().replace(/[_-]+/g, ' ').replace(/\s+/g, ' ');
@@ -10779,6 +10783,7 @@ const MasterControlIO = {
         'REGIONAL': xl(self.formatRegional(r)),
         'CABANG': xl(self.formatBranch(r)),
         'DEPO': xl(r.depot_name || ''),
+        'PLANT': xl(r.plant || ''),
         'STATUS MONITORING': MasterCabangAuthority.status(r.depot_code, 'monitoring'),
         'STATUS RANKING': MasterCabangAuthority.status(r.depot_code, 'ranking'),
         'STATUS INFORMASI': MasterCabangAuthority.status(r.depot_code, 'informasi')
@@ -10787,7 +10792,7 @@ const MasterControlIO = {
 
     return MasterCabangIO.loadXlsx().then(function (X) {
       const ws = X.utils.json_to_sheet(rows, { header: MasterControlIO.HEADERS });
-      ws['!cols'] = [{wch:16},{wch:24},{wch:30},{wch:28},{wch:20},{wch:18},{wch:20}];
+      ws['!cols'] = [{wch:16},{wch:24},{wch:30},{wch:28},{wch:14},{wch:20},{wch:18},{wch:20}];
       const wb = X.utils.book_new();
       X.utils.book_append_sheet(wb, ws, 'MASTER CABANG');
       X.writeFile(wb, 'Master-Cabang-Saat-Ini-' + U.wibNowDate() + '.xlsx');
@@ -10817,7 +10822,10 @@ const MasterControlIO = {
       const norm = (matrix[i] || []).map(this.normalizeHeader);
       const test = {};
       this.HEADERS.forEach(function (h) { test[h] = norm.indexOf(h); });
-      if (this.HEADERS.every(function (h) { return test[h] >= 0; })) {
+      /* Backward compatible: file V1.7.7.8 tanpa PLANT tetap valid dan memakai
+         Plant current. Download V1.7.7.9.2.1 selalu menyertakan PLANT. */
+      if (this.HEADERS.filter(function (h) { return h !== 'PLANT'; })
+          .every(function (h) { return test[h] >= 0; })) {
         at = i;
         idx = test;
         break;
@@ -10859,6 +10867,9 @@ const MasterControlIO = {
       const regionalRaw = self.parseRegional(r[idx['REGIONAL']]);
       const branchRaw = self.parseBranch(r[idx['CABANG']]);
       const depotName = self.cleanText(r[idx['DEPO']]);
+      const plant = idx['PLANT'] >= 0
+        ? self.cleanText(r[idx['PLANT']]).toUpperCase()
+        : self.cleanText(current.plant).toUpperCase();
 
       if (!regionalRaw.name || !branchRaw.name || !depotName) {
         out.invalid.push({
@@ -10866,6 +10877,11 @@ const MasterControlIO = {
           code: code,
           message: 'REGIONAL, CABANG, dan DEPO wajib terisi.'
         });
+        continue;
+      }
+
+      if (plant && !/^[A-Z0-9._/-]{1,64}$/.test(plant)) {
+        out.invalid.push({ line: line, code: code, message: 'Plant tidak valid. Contoh yang didukung: P194, 283, atau 55.' });
         continue;
       }
 
@@ -10912,6 +10928,7 @@ const MasterControlIO = {
         branch_code: desiredBranchCode,
         branch_name: branchRaw.name,
         depot_name: depotName,
+        plant: plant,
         status_monitoring: self.cleanText(r[idx['STATUS MONITORING']]).toUpperCase(),
         status_ranking: self.cleanText(r[idx['STATUS RANKING']]).toUpperCase(),
         status_informasi: self.cleanText(r[idx['STATUS INFORMASI']]).toUpperCase()
@@ -10936,6 +10953,7 @@ const MasterControlIO = {
         branch_code: self.cleanText(current.branch_code).toUpperCase(),
         branch_name: self.cleanText(current.branch_name),
         depot_name: self.cleanText(current.depot_name),
+        plant: self.cleanText(current.plant).toUpperCase(),
         status_monitoring: MasterCabangAuthority.status(code, 'monitoring'),
         status_ranking: MasterCabangAuthority.status(code, 'ranking'),
         status_informasi: MasterCabangAuthority.status(code, 'informasi')
@@ -10947,6 +10965,7 @@ const MasterControlIO = {
         before.branch_code !== raw.branch_code ||
         !self.sameText(before.branch_name, raw.branch_name) ||
         !self.sameText(before.depot_name, raw.depot_name) ||
+        before.plant !== raw.plant ||
         before.status_monitoring !== raw.status_monitoring ||
         before.status_ranking !== raw.status_ranking ||
         before.status_informasi !== raw.status_informasi;
@@ -10988,7 +11007,7 @@ RankingMasterView.card = function () {
     function badge(s) { return '<span class="master-status ' + (s === 'TAKE OUT' ? 'takeout' : 'active') + '">' + U.esc(s) + '</span>'; }
     return '<tr><td>' + U.esc(r.regional_name || r.regional_code || '–') + '</td><td>' +
       U.esc(r.branch_name || r.branch_code || '–') + '</td><td>' + U.esc(r.depot_code) + '</td><td>' +
-      U.esc(r.depot_name || '–') + '</td><td>' + badge(MasterCabangAuthority.status(r.depot_code,'monitoring')) +
+      U.esc(r.depot_name || '–') + '</td><td>' + U.esc(r.plant || '–') + '</td><td>' + badge(MasterCabangAuthority.status(r.depot_code,'monitoring')) +
       '</td><td>' + badge(MasterCabangAuthority.status(r.depot_code,'ranking')) + '</td><td>' +
       badge(MasterCabangAuthority.status(r.depot_code,'informasi')) + '</td></tr>';
   }).join('');
@@ -10997,9 +11016,9 @@ RankingMasterView.card = function () {
     '</div></div><div class="mcell"><div class="mcell-l">Monitoring Aktif</div><div class="mcell-v">' + U.int(active) +
     '</div></div></div><div class="master-actions"><button class="btn-ghost" data-act="master-download">Download Master Saat Ini</button>' +
     '<label class="btn-primary rk-file">Upload Master<input type="file" id="masterControlFile" accept=".xlsx,.xls" hidden></label></div>' +
-    '<div class="dd-note">Upload digunakan untuk validasi dan preview perubahan <b>Regional, Cabang, Depo, serta Status</b>. Setelah preview valid, tombol <b>Terapkan</b> akan memperbarui Master Cabang Supabase secara transactional. Row yang tidak ada di file berarti <b>NO CHANGE</b>. TAKE OUT tidak menghapus data atau history.</div>' +
-    '<div class="result-table-wrap"><table class="rtbl"><thead><tr><th>Regional</th><th>Cabang</th><th>Kode Depo</th><th>Depo</th><th>Status Monitoring</th><th>Status Ranking</th><th>Status Informasi</th></tr></thead><tbody>' +
-    (table || '<tr><td colspan="7">Master belum tersedia</td></tr>') + '</tbody></table></div>' +
+    '<div class="dd-note">Upload digunakan untuk validasi dan preview perubahan <b>Regional, Cabang, Depo, Plant, serta Status</b>. Setelah preview valid, tombol <b>Terapkan</b> akan memperbarui Master Cabang dan source resolver Supabase secara transactional. File lama tanpa kolom Plant tetap memakai Plant current. Row yang tidak ada di file berarti <b>NO CHANGE</b>. TAKE OUT tidak menghapus data atau history.</div>' +
+    '<div class="result-table-wrap"><table class="rtbl"><thead><tr><th>Regional</th><th>Cabang</th><th>Kode Depo</th><th>Depo</th><th>Plant</th><th>Status Monitoring</th><th>Status Ranking</th><th>Status Informasi</th></tr></thead><tbody>' +
+    (table || '<tr><td colspan="8">Master belum tersedia</td></tr>') + '</tbody></table></div>' +
     (rows.length > 200 ? '<div class="dd-note">Tabel menampilkan 200 Depo pertama. Download XLSX memuat seluruh Depo.</div>' : ''));
 };
 RankingMasterView.preview = function () {
@@ -11026,16 +11045,24 @@ RankingMasterView.preview = function () {
       diffText(fmt(r.before.branch_code, r.before.branch_name),
                fmt(r.after.branch_code, r.after.branch_name), 'Cabang') +
       diffText(r.before.depot_name, r.after.depot_name, 'Depo') +
+      diffText(r.before.plant, r.after.plant, 'Plant') +
       diffText(r.before.status_monitoring, r.after.status_monitoring, 'Monitoring') +
       diffText(r.before.status_ranking, r.after.status_ranking, 'Ranking') +
       diffText(r.before.status_informasi, r.after.status_informasi, 'Informasi');
 
+    const current = MasterCabangAuthority.byDepot[r.depot_code] || {};
+    const oldName = String(r.before.depot_name || '').trim();
+    const newName = String(r.after.depot_name || '').trim();
+    const alias = oldName && oldName.toUpperCase() !== newName.toUpperCase()
+      ? oldName.toUpperCase() + ' (HISTORICAL)' : '–';
+
     return '<tr><td>UPDATED</td><td>' + U.esc(r.depot_code) + '</td><td>' +
-      U.esc(r.after.depot_name || r.depot || '–') + '</td><td class="master-diff">' +
+      U.esc(oldName || '–') + '</td><td>' + U.esc(newName || '–') + '</td><td>' +
+      U.esc(alias) + '</td><td>' + U.esc(r.after.plant || current.plant || '–') + '</td><td class="master-diff">' +
       (d || '–') + '</td></tr>';
   }).concat(v.invalid.map(function (r) {
     return '<tr><td>INVALID</td><td>' + U.esc(r.code || '–') + '</td><td>Baris ' +
-      U.int(r.line) + '</td><td>' + U.esc(r.message) + '</td></tr>';
+      U.int(r.line) + '</td><td>–</td><td>–</td><td>–</td><td>' + U.esc(r.message) + '</td></tr>';
   })).join('');
 
   let subtitle = 'Belum dapat diterapkan';
@@ -11057,12 +11084,15 @@ RankingMasterView.preview = function () {
       ? '<div class="dd-note">' + U.int(v.missing.length) +
         ' Depo tidak ada di file upload dan diperlakukan sebagai <b>NO CHANGE</b>. Tidak dihapus dan tidak otomatis TAKE OUT.</div>'
       : '') +
-    '<div class="result-table-wrap"><table class="rtbl"><thead><tr><th>Status</th><th>Kode Depo</th><th>Depo</th><th>Perubahan</th></tr></thead><tbody>' +
-      (list || '<tr><td colspan="4">Tidak ada perubahan.</td></tr>') +
+    (!MASTER_CONTROL_WRITE_ENABLED
+      ? '<div class="rk-warn"><b>Apply tidak tersedia pada konfigurasi ini.</b></div>'
+      : '') +
+    '<div class="result-table-wrap"><table class="rtbl"><thead><tr><th>Status</th><th>Kode Depo</th><th>Current Name</th><th>New Name</th><th>Alias Ditambahkan</th><th>Plant</th><th>Perubahan</th></tr></thead><tbody>' +
+      (list || '<tr><td colspan="7">Tidak ada perubahan.</td></tr>') +
     '</tbody></table></div>' +
     '<div class="rk-btnrow">' +
       '<button class="btn-primary" data-act="master-confirm"' +
-        ((v.valid && v.changes.length && !MasterControlIO._applying) ? '' : ' disabled') + '>' +
+        ((v.valid && v.changes.length && !MasterControlIO._applying && MASTER_CONTROL_WRITE_ENABLED) ? '' : ' disabled') + '>' +
         (MasterControlIO._applying ? 'Menerapkan…' : 'Terapkan ke Supabase') + '</button>' +
       '<button class="btn-ghost" data-act="master-cancel">Batal</button>' +
     '</div>'
@@ -12012,7 +12042,8 @@ const Controller = {
       else if (act === 'master-cancel') { RankingMasterView._preview = null; RankingShell.renderPreserveScroll(); }
       else if (act === 'master-confirm') {
         const pv = RankingMasterView._preview;
-        if (!pv || !pv.result || !pv.result.valid || !pv.result.changes.length || MasterControlIO._applying) return;
+        if (!MASTER_CONTROL_WRITE_ENABLED || !pv || !pv.result || !pv.result.valid ||
+            !pv.result.changes.length || MasterControlIO._applying) return;
 
         const changes = pv.result.changes.map(function (r) {
           const a = r.after || {};
@@ -12023,6 +12054,7 @@ const Controller = {
             branch_code: a.branch_code,
             branch_name: a.branch_name,
             depot_name: a.depot_name,
+            plant: a.plant,
             status_monitoring: a.status_monitoring,
             status_ranking: a.status_ranking,
             status_informasi: a.status_informasi,
