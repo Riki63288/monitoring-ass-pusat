@@ -7,8 +7,99 @@
 <style>
 /* ============================================================
    PORTAL MONITORING ASS — PUSAT
-   Build Pusat V1.7.7.9.2.1  |  MASTER SSOT PRODUCTION COMPATIBILITY
+   Build Pusat V1.7.9.4  |  PUBLISH HISTORY ATOMIC REPLACEMENT
    ---------------------------------------------------------------------------
+   V1.7.9.4 — PUBLISH HISTORY ATOMIC REPLACEMENT
+   A. Setiap response yang membawa node publish_history sekarang menggantikan
+      authoritative history state sebelumnya secara atomic; same-period rows
+      tidak lagi di-union dengan snapshot lama.
+   B. Payload tanpa node publish_history tidak mengubah state, sedangkan node
+      present tetapi malformed/null mereset authoritative state agar COMPLETE
+      lama tidak tertinggal.
+   C. Authoritative empty snapshot dapat benar-benar menggantikan history
+      sebelumnya, termasuk pada period_month yang sama.
+   D. Existing V1.7.9.3 authority precedence, observable integrity cross-check,
+      PARTIAL/COMPLETE semantics, timestamp/timezone validation, Project contracts,
+      PROCESS, Ranking, Master dan Informasi dipertahankan.
+
+   V1.7.9.3 — PUBLISH HISTORY AUTHORITY PRECEDENCE
+   A. Saat publish_history V1 valid COMPLETE, matrix Riwayat Update Harian
+      menggunakan authoritative contract rows sebagai satu-satunya event source;
+      observable active batches tidak lagi dicampurkan ke hasil authoritative.
+   B. Observable batches digunakan sebagai integrity cross-check. Extra/conflicting
+      same-period observable batch terhadap COMPLETE contract menurunkan effective
+      history mode menjadi PARTIAL, bukan digabung sambil tetap COMPLETE.
+   C. Authoritative empty history tetap valid hanya bila tidak bertentangan dengan
+      same-period observable evidence; contradiction menggunakan safe PARTIAL mode.
+   D. Observable subset tidak membatalkan COMPLETE karena current/active batch
+      source memang boleh hanya menjadi subset dari historical authority.
+   E. Existing V1.7.9.2 timestamp/timezone integrity, Project completeness,
+      Daily/Baseline Salesman, PROCESS, Ranking, Master dan Informasi tetap
+      dipertahankan.
+
+   V1.7.9.2 — PUBLISH HISTORY INTEGRITY FINAL
+   A. Authoritative publish_history COMPLETE kini mensyaratkan timezone
+      Asia/Jakarta secara eksplisit dan seluruh created_at harus merupakan
+      timestamp valid.
+   B. Malformed historical row membatalkan claim COMPLETE; Web Pusat tidak
+      menggunakan authoritative subset yang dapat menghasilkan false missing
+      publish.
+   C. Duplicate conflicting batch_id membatalkan integrity COMPLETE, sedangkan
+      exact duplicate tetap dapat dideduplikasi secara defensif.
+   D. Publish History state dihydrate secara clean/atomic sehingga COMPLETE state
+      lama tidak terbawa setelah payload malformed atau pergantian period.
+   E. Existing Project completeness, Daily/Baseline Salesman V1, PROCESS,
+      Ranking, Master, Informasi, badge event dan authoritative empty-history
+      behaviour tetap dipertahankan.
+
+   V1.7.9.1 — CONTRACT COMPLETENESS SAFETY
+   A. Future Daily Salesman dan Baseline Salesman memakai fail-closed contract
+      validation; malformed/duplicate payload tidak lagi digunakan sebagian.
+   B. Project parent aggregate hanya aktif bila granular future contract lengkap
+      untuk expected Project population pada Monitoring Scope aktif; partial
+      rollout tidak ditampilkan sebagai angka complete.
+   C. Baseline Project incomplete tetap menampilkan Current tetapi Baseline/Growth
+      unavailable, tanpa subset comparison.
+   D. Authoritative publish_history V1 menerima complete=true dengan rows kosong;
+      malformed complete history tidak digunakan sebagai authoritative subset.
+   E. Existing Total Depo, PROCESS, Ranking, Master, Informasi dan future contract
+      architecture V1.7.9 dipertahankan.
+
+   V1.7.9 — FUTURE DATA CONTRACT READY
+   A. Web Pusat siap otomatis membaca RESULT Daily Salesman V1 untuk
+      Monitoring Harian + Trend Project tanpa mengubah Total Depo authority.
+   B. Web Pusat siap otomatis membaca RESULT Baseline Salesman V1 untuk
+      Detail MTD Project yang comparable.
+   C. Publish History membedakan NONE / PARTIAL / COMPLETE; missing workday
+      hanya merah ketika historical source authoritative lengkap.
+   D. Multiple publish memakai distinct publish action union antar domain;
+      PROCESS + RESULT dalam event sama tetap satu publish.
+   E. Semua contract bersifat additive/backward-compatible; sebelum producer
+      tersedia UI tetap fail-safe dan tidak membuat angka/history sintetis.
+
+   V1.7.8.1 — PUBLISH HISTORY IDENTITY SAFETY
+   A. Batch dedupe memakai batch_id sebagai primary identity; publish_event_id
+      tidak lagi menghapus PROCESS/RESULT batch yang berada pada event sama.
+   B. publish_event_id digunakan sebagai grouping publish action, sehingga
+      PROCESS + RESULT pada satu publish tidak dianggap revisi 2x.
+   C. Multiple publish badge hanya berasal dari distinct publish event yang
+      benar-benar observable; revision_number tidak digunakan untuk menebak
+      same-day revision history.
+   D. Existing Project-scoped Result, Detail MTD safety, daily publish matrix,
+      Sunday handling, Ranking, PROCESS authority dan backend contract
+      dipertahankan.
+
+   V1.7.8 — PROJECT-SCOPED RESULT + DAILY PUBLISH DISCIPLINE
+   A. Monitoring Harian Hasil Kerja dan Trend menggunakan Coverage Salesman /
+      Project bila granular authority tersedia; tidak ada fallback palsu ke Total Depo.
+   B. Detail MTD Current/Baseline dibuat scope-safe terhadap Coverage Project;
+      baseline yang tidak comparable ditampilkan unavailable, bukan Total Depo.
+   C. Informasi menambah Riwayat Update Harian per Depo dengan posisi
+      P(HK Proses) / H(HK Hasil), missing workday, multiple publish badge,
+      dan Sunday/non-working-day handling.
+   D. Existing Update per Depo, RESULT Daily Depot V2, PROCESS authority,
+      Ranking, Master Cabang, Master Salesman, dan backend contract dipertahankan.
+
    V1.7.7.9.2.1 — MASTER CABANG SSOT SOURCE RESOLVER
    - Kontrak autentikasi produksi dipertahankan untuk Read dan Apply.
    - Preview rename menampilkan current/new name, alias historical, dan Plant current.
@@ -731,6 +822,72 @@ table{ border-collapse:separate; border-spacing:0; width:100%; }
 .info-cue-lag{ background:rgba(210,85,31,.075); }
 .info-missing{ color:var(--ink-3); font-weight:650; }
 
+/* ============ V1.7.8 — RIWAYAT UPDATE HARIAN (matrix publish) ============ */
+.phist-wrap{ overflow-x:auto; overflow-y:hidden; -webkit-overflow-scrolling:touch; }
+.phist-table{
+  border-collapse:separate; border-spacing:0; table-layout:auto;
+  font-variant-numeric:tabular-nums; min-width:100%;
+}
+.phist-table th,.phist-table td{
+  border-bottom:1px solid var(--line); border-right:1px solid var(--line);
+  padding:3px 4px; white-space:nowrap; text-align:center; font-size:9.5px; line-height:1.15;
+}
+.phist-table tbody tr:last-child th,.phist-table tbody tr:last-child td{ border-bottom:0; }
+.phist-dh{
+  background:var(--surface-2); color:var(--ink-3); font-weight:750;
+  padding:4px 5px; position:sticky; top:0; z-index:3;
+}
+.phist-dh-d{ display:block; font-size:10px; font-weight:800; color:var(--ink-2); }
+.phist-dh-w{ display:block; font-size:8px; letter-spacing:.04em; text-transform:uppercase; }
+.phist-dh.is-sun .phist-dh-d,.phist-dh.is-sun .phist-dh-w{ color:#7b8a99; }
+.phist-dh.is-future{ opacity:.55; }
+.phist-depo{
+  position:sticky; left:0; z-index:2; background:var(--surface-1);
+  text-align:left; min-width:132px; max-width:190px; padding:4px 9px;
+  box-shadow:1px 0 0 var(--line);
+}
+.phist-corner{ z-index:4; background:var(--surface-2); color:var(--ink-3);
+  font-size:9.5px; font-weight:750; letter-spacing:.075em; text-transform:uppercase; }
+.phist-depo-name{ display:block; font-size:10.5px; font-weight:750; color:var(--ink-1);
+  overflow:hidden; text-overflow:ellipsis; }
+.phist-depo-sub{ display:block; font-size:8.5px; color:var(--ink-3);
+  overflow:hidden; text-overflow:ellipsis; }
+.phist-cell{ min-width:56px; }
+.phist-cell.is-publish{ background:#ffffff; }
+.phist-cell.is-repeat{ background:#fff8e8; }
+.phist-cell.is-missing{ background:#fdeaea; }
+/* V1.7.9 — PARTIAL: belum dapat diverifikasi. Netral, BUKAN merah. */
+.phist-cell.is-unverified{ background:#f7f8f9; }
+.phist-unk{ font-size:10px; font-weight:750; color:#9aa8b4; }
+.phist-cell.is-holiday,.phist-cell.is-holiday-publish{ background:#eef1f4; }
+.phist-cell.is-future{ background:transparent; }
+.phist-hk{ font-size:9.5px; font-weight:750; color:var(--ink-1); }
+.phist-miss{ font-size:11px; font-weight:800; color:#c0392b; }
+.phist-holiday{ font-size:8px; font-weight:750; letter-spacing:.05em; color:#8496a6; }
+.phist-badge{
+  display:inline-block; margin-left:3px; padding:0 3px; border-radius:3px;
+  background:#f59e0b; color:#3a2a00; font-size:7.5px; font-weight:800;
+  line-height:1.5; vertical-align:middle;
+}
+.phist-cap-note{ color:var(--ink-3); font-style:italic; }
+.phist-legend{ display:inline-flex; align-items:center; gap:4px; margin:0 8px 0 0; white-space:nowrap; }
+.phist-key{ display:inline-block; width:10px; height:10px; border-radius:2px; border:1px solid var(--line); }
+.phist-key.is-publish{ background:#ffffff; }
+.phist-key.is-missing{ background:#fdeaea; }
+.phist-key.is-holiday{ background:#eef1f4; }
+.phist-key.is-unverified{ background:#f7f8f9; }
+.phist-key.is-repeat{ background:#f59e0b; }
+/* Export JPG: sticky dimatikan oleh .jpg-stage (position:static !important),
+   sehingga seluruh kolom tanggal dan seluruh baris ikut ter-capture. */
+.jpg-stage .phist-wrap{ overflow:visible !important; }
+.jpg-stage .phist-depo{ box-shadow:none; }
+
+@media (max-width:620px){
+  .phist-table th,.phist-table td{ padding:3px; font-size:9px; }
+  .phist-depo{ min-width:104px; }
+  .phist-cell{ min-width:50px; }
+}
+
 @media (max-width:620px){
   .info-summary{ gap:8px; }
   .info-summary-card{ padding:10px; }
@@ -1422,7 +1579,7 @@ table{ border-collapse:separate; border-spacing:0; width:100%; }
       <span class="hdr-clock" id="hdrClock"></span>
       <span class="badge-demo" id="demoBadge"
             title="Status sumber data Monitoring Pusat.">MEMUAT…</span>
-      <span class="badge-build">Build Pusat V1.7.7.9.2.1</span>
+      <span class="badge-build">Build Pusat V1.7.9.4</span>
     </div>
   </div>
   <nav class="app-nav" id="appNav" aria-label="Navigasi utama">
@@ -2537,8 +2694,21 @@ const LiveDataStore = {
     dailyDepot: { rows: [], byDepotDate: {}, byDate: {}, depots: [], dates: [],
                   available: false, notes: [] },
     /* V1.7.7.7 — exact Current/Baseline pair per Depo dari Website ASS */
-    baselineDepot: { rows: [], byDepot: {}, available: false, notes: [] }
+    baselineDepot: { rows: [], byDepot: {}, available: false, notes: [] },
+    /* V1.7.9 — FUTURE CONTRACT: granular SALESMAN x TANGGAL (authority Project).
+       Hidup berdampingan dengan dailyDepot V2 (authority TOTAL DEPO). */
+    dailySalesman: { rows: [], byDepotDate: {}, byDate: {}, depots: [], dates: [],
+                     available: false, version: null, dateBasis: null, rowsBasis: null, notes: [] },
+    /* V1.7.9 — FUTURE CONTRACT: pasangan Current/Baseline grain SALESMAN. */
+    baselineSalesman: { rows: [], bySalesman: {}, heads: [], depots: [], header: null,
+                        available: false, version: null, notes: [] }
   },
+
+  /* V1.7.9 — FUTURE CONTRACT: authoritative publish history (top-level node).
+     V1.7.9.2 — dibuat lewat factory agar hydration selalu clean/atomic. */
+  publishHistory: { available: false, complete: false, declaredComplete: false,
+                    version: null, timezone: null, periodMonth: null,
+                    rows: [], rejected: 0, authoritativeEmpty: false, notes: [] },
 
   org: {
     regionals: [], branches: [], depots: [], ass: [], salesmen: [],
@@ -2546,6 +2716,14 @@ const LiveDataStore = {
   },
 
   bump: function () { this.rev++; },
+
+  /* V1.7.9.2 — satu-satunya sumber bentuk state publish history. Dipakai oleh
+     reset() maupun hydration, sehingga tidak ada field lama yang tertinggal. */
+  defaultPublishHistory: function () {
+    return { available: false, complete: false, declaredComplete: false,
+             version: null, timezone: null, periodMonth: null,
+             rows: [], rejected: 0, authoritativeEmpty: false, notes: [] };
+  },
 
   /* ==========================================================================
      V1.7.6 — REBUILD ORGANIZATION GRAPH SETELAH MASTER SALESMAN BERUBAH.
@@ -2619,7 +2797,14 @@ const LiveDataStore = {
                     mtdRecords: [], dailyRecords: [], dailyIndex: {}, eceranSegments: [],
                     dailyDepot: { rows: [], byDepotDate: {}, byDate: {}, depots: [], dates: [],
                                   available: false, notes: [] },
-                    baselineDepot: { rows: [], byDepot: {}, available: false, notes: [] } };
+                    baselineDepot: { rows: [], byDepot: {}, available: false, notes: [] },
+                    /* V1.7.9 — future contract stores */
+                    dailySalesman: { rows: [], byDepotDate: {}, byDate: {}, depots: [], dates: [],
+                                     available: false, version: null, dateBasis: null,
+                                     rowsBasis: null, notes: [] },
+                    baselineSalesman: { rows: [], bySalesman: {}, heads: [], depots: [], header: null,
+                                        available: false, version: null, notes: [] } };
+    this.publishHistory = LiveDataStore.defaultPublishHistory();
     this.org = { regionals: [], branches: [], depots: [], ass: [], salesmen: [],
                  byCode: { regional: {}, branch: {}, depot: {}, ass: {}, salesman: {} } };
     this.bump();
@@ -2891,6 +3076,336 @@ const LiveNormalize = {
       });
     }
     return out.length ? out : null;
+  },
+
+  /* ==========================================================================
+     V1.7.9 — FUTURE CONTRACT: RESULT DAILY SALESMAN V1.
+     source_meta.result_daily_salesman (grain SALESMAN x TANGGAL ORDER).
+
+     Contract:
+       result_daily_salesman_available : true
+       result_daily_salesman_version   : 1
+       result_daily_salesman_date_basis: "ORDER_DATE"
+       result_daily_salesman_scope     : "FULL_SOURCE" (informational)
+       result_daily_salesman_rows_basis: "ACTIVE_SALESMAN_DAYS" (opsional,
+           EKSPLISIT — hanya dengan ini row tanpa field salesman_active boleh
+           dianggap active. Tanpa metadata eksplisit, row tanpa salesman_active
+           TIDAK diklaim active dan dikeluarkan dari denominator Avg EC.)
+       result_daily_salesman           : [ { report_date, salesman_code,
+                                             omset, ec_count, salesman_active } ]
+
+     ADDITIVE & BACKWARD COMPATIBLE: bila node tidak ada / malformed, fungsi
+     mengembalikan null dan seluruh jalur Total Depo existing tidak terganggu.
+     depot_code utama = batch.depot_code canonical. Bila row juga membawa
+     depot_code, WAJIB cocok — mismatch dicatat dan barisnya dibuang, tidak
+     dipakai diam-diam.
+     ========================================================================== */
+  resultDailySalesmanOf: function (batch, org, diagnostics) {
+    const meta = this.sourceMetaOf(batch);
+    if (!meta) return null;
+    if (meta.result_daily_salesman_available !== true) return null;
+    const depot = this.code(batch.depot_code);
+    if (!depot) return null;
+    const note = function (m) { if (diagnostics && diagnostics.length < 40) diagnostics.push(m); };
+    /* V1.7.9.1 — FAIL-CLOSED. Contract yang menyatakan dirinya available bersifat
+       ATOMIC per batch/Depo: satu pelanggaran mandatory => SELURUH contract Depo
+       tersebut ditolak. Subset TIDAK PERNAH dipakai, karena subset dapat tampil
+       seolah-olah lengkap. */
+    const reject = function (m) {
+      note(m + ' \u2014 SELURUH contract Daily Salesman Depo ini ditolak.');
+      return null;
+    };
+    if (Number(meta.result_daily_salesman_version) !== 1)
+      return reject('Depo ' + depot + ': version bukan 1');
+    if (String(meta.result_daily_salesman_date_basis || '').toUpperCase() !== 'ORDER_DATE')
+      return reject('Depo ' + depot + ': date_basis bukan ORDER_DATE');
+    /* scope WAJIB FULL_SOURCE: hanya dengan ini Pusat boleh menganggap rows
+       merepresentasikan SELURUH salesman Depo tersebut. */
+    if (String(meta.result_daily_salesman_scope || '').toUpperCase() !== 'FULL_SOURCE')
+      return reject('Depo ' + depot + ': scope bukan FULL_SOURCE');
+    const arr = meta.result_daily_salesman;
+    if (!Array.isArray(arr) || !arr.length)
+      return reject('Depo ' + depot + ': result_daily_salesman bukan array valid / kosong');
+    const dp = (org && org.byCode && org.byCode.depot) ? (org.byCode.depot[depot] || null) : null;
+    const period = this.s(batch.period_month || '').slice(0, 7);
+    const rowsBasis = String(meta.result_daily_salesman_rows_basis || '').toUpperCase();
+    const seen = {}, out = [];
+    for (let i = 0; i < arr.length; i++) {
+      const row = arr[i];
+      if (!row || typeof row !== 'object')
+        return reject('Depo ' + depot + ': baris ke-' + (i + 1) + ' bukan object');
+      /* salesman_code adalah STRING identity — leading zero WAJIB aman. */
+      const code = this.code(row.salesman_code);
+      if (!code) return reject('Depo ' + depot + ': baris ke-' + (i + 1) + ' tanpa salesman_code');
+      const date = this.s(row.report_date || '').slice(0, 10);
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(date))
+        return reject('Depo ' + depot + ': report_date tidak valid pada salesman ' + code);
+      /* report_date = DATE bisnis (Tanggal Order); TIDAK pernah digeser timezone. */
+      if (period && date.slice(0, 7) !== period)
+        return reject('Depo ' + depot + ': ' + date + ' di luar period_month ' + period);
+      if (row.depot_code !== undefined && row.depot_code !== null && row.depot_code !== '') {
+        const rowDepot = this.code(row.depot_code);
+        if (rowDepot !== depot)
+          return reject('Depo ' + depot + ': salesman ' + code + ' membawa depot_code ' + rowDepot + ' (mismatch canonical batch)');
+      }
+      const omset = this.numIn(row.omset, null, null);        /* 0 valid; malformed -> null */
+      const ec = this.numIn(row.ec_count, 0, null);           /* 0 valid; negatif -> null */
+      /* 0 valid; null/malformed BUKAN 0 dan bersifat mandatory. */
+      if (omset === null) return reject('Depo ' + depot + ': omset tidak numeric pada salesman ' + code + ' ' + date);
+      if (ec === null) return reject('Depo ' + depot + ': ec_count tidak numeric non-negative pada salesman ' + code + ' ' + date);
+      if (row.salesman_active !== true && row.salesman_active !== false)
+        return reject('Depo ' + depot + ': salesman_active bukan boolean pada salesman ' + code + ' ' + date);
+      const k = date + '' + code;
+      /* Grain authority = Depo x Salesman x Report Date. Duplicate TIDAK di-SUM,
+         TIDAK dipilih latest, TIDAK di-dedupe diam-diam: contract ditolak. */
+      if (seen[k]) return reject('Depo ' + depot + ': duplicate grain salesman ' + code + ' pada ' + date);
+      seen[k] = 1;
+      out.push({
+        batch_id: this.s(batch.batch_id),
+        depot_code: depot,
+        depot_name: dp ? dp.name : depot,
+        branch_code: dp ? dp.branch_code : '',
+        branch_name: dp ? dp.branch_name : '',
+        regional_code: dp ? dp.regional_code : '',
+        regional_name: dp ? dp.regional_name : '',
+        period_month: this.s(batch.period_month || '').slice(0, 10),
+        report_date: date,
+        salesman_code: code,
+        omset: omset,
+        ec: ec,
+        salesman_active: row.salesman_active === true,
+        source_version: 1,
+        date_basis: 'ORDER_DATE',
+        scope: 'FULL_SOURCE',
+        rows_basis: rowsBasis || null
+      });
+    }
+    return out.length ? out : null;
+  },
+
+  /* ==========================================================================
+     V1.7.9 — FUTURE CONTRACT: RESULT BASELINE SALESMAN V1.
+     source_meta.result_baseline_salesman (grain SALESMAN, pasangan
+     Current/Baseline authoritative dari Website ASS).
+
+     Website ASS adalah authority comparison basis. Pusat HANYA memfilter
+     salesman sesuai Coverage Project lalu menjumlahkan, dan memakai formula
+     Growth existing. Pusat TIDAK PERNAH menyusun baseline sendiri.
+     Payload yang tidak lengkap / tidak comparable ditolak seluruhnya
+     (bukan dipakai sebagian diam-diam).
+     ========================================================================== */
+  resultBaselineSalesmanOf: function (batch, org, diagnostics) {
+    const meta = this.sourceMetaOf(batch);
+    if (!meta || meta.result_baseline_salesman_available !== true) return null;
+    const depot = this.code(batch.depot_code); if (!depot) return null;
+    const note = function (m) { if (diagnostics && diagnostics.length < 40) diagnostics.push(m); };
+    /* V1.7.9.1 — FAIL-CLOSED, ATOMIC per batch/Depo (lihat Daily Salesman).
+       Growth Project yang dihitung dari subset baseline akan terlihat
+       authoritative padahal salah, jadi subset dilarang total. */
+    const reject = function (m) {
+      note(m + ' \u2014 SELURUH contract Baseline Salesman Depo ini ditolak.');
+      return null;
+    };
+    if (Number(meta.result_baseline_salesman_version) !== 1)
+      return reject('Depo ' + depot + ': result_baseline_salesman version bukan 1');
+    const raw = meta.result_baseline_salesman;
+    if (!raw || typeof raw !== 'object' || Array.isArray(raw))
+      return reject('Depo ' + depot + ': result_baseline_salesman bukan object');
+    const date = function (v, monthOnly) {
+      const x = LiveNormalize.s(v || '').slice(0, 10);
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(x)) return null;
+      return monthOnly && x.slice(8, 10) !== '01' ? null : x;
+    };
+    const nonNeg = function (v) { return LiveNormalize.numIn(v, 0, null); };
+    if (String(raw.scope || '').toUpperCase() !== 'SALESMAN')
+      return reject('Depo ' + depot + ': result_baseline_salesman scope bukan SALESMAN');
+    if (!this.s(raw.authority || '').trim())
+      return reject('Depo ' + depot + ': result_baseline_salesman tanpa authority');
+    const basis = this.s(raw.comparison_basis || '').trim();
+    if (!basis) return reject('Depo ' + depot + ': result_baseline_salesman tanpa comparison_basis');
+    const head = {
+      batch_id: this.s(batch.batch_id), depot_code: depot,
+      authority: this.s(raw.authority), scope: 'SALESMAN', comparison_basis: basis,
+      current_period_month: date(raw.current_period_month, true),
+      current_hk: nonNeg(raw.current_hk),
+      current_cutoff_date: date(raw.current_cutoff_date, false),
+      baseline_period_month: date(raw.baseline_period_month, true),
+      baseline_hk: nonNeg(raw.baseline_hk),
+      baseline_cutoff_date: date(raw.baseline_cutoff_date, false)
+    };
+    if (!head.current_period_month || !head.baseline_period_month ||
+        head.current_hk === null || head.baseline_hk === null ||
+        !head.current_cutoff_date || !head.baseline_cutoff_date)
+      return reject('Depo ' + depot + ': header periode/HK/cutoff baseline salesman tidak lengkap');
+    const arr = raw.rows;
+    if (!Array.isArray(arr) || !arr.length)
+      return reject('Depo ' + depot + ': result_baseline_salesman rows bukan array valid / kosong');
+    const seen = {}, rows = [];
+    for (let i = 0; i < arr.length; i++) {
+      const r = arr[i];
+      if (!r || typeof r !== 'object')
+        return reject('Depo ' + depot + ': baris baseline ke-' + (i + 1) + ' bukan object');
+      const code = this.code(r.salesman_code);
+      if (!code) return reject('Depo ' + depot + ': baris baseline ke-' + (i + 1) + ' tanpa salesman_code');
+      const cur = r.current, base = r.baseline;
+      if (!cur || !base || typeof cur !== 'object' || typeof base !== 'object' ||
+          Array.isArray(cur) || Array.isArray(base))
+        return reject('Depo ' + depot + ' ' + code + ': pasangan current/baseline tidak lengkap');
+      const c = { omset: nonNeg(cur.omset), roa: nonNeg(cur.roa_count), ec: nonNeg(cur.ec_count) };
+      const b = { omset: nonNeg(base.omset), roa: nonNeg(base.roa_count), ec: nonNeg(base.ec_count) };
+      /* 0 valid; null/missing/malformed TIDAK PERNAH dijadikan 0 -> contract ditolak. */
+      if (['omset','roa','ec'].some(function (k) { return c[k] === null || b[k] === null; }))
+        return reject('Depo ' + depot + ' ' + code + ': metric baseline salesman invalid (0 valid, null tidak)');
+      /* Duplicate salesman dalam satu contract TIDAK di-SUM: contract ditolak. */
+      if (seen[code]) return reject('Depo ' + depot + ': duplicate baseline salesman ' + code);
+      seen[code] = 1;
+      rows.push({ batch_id: head.batch_id, depot_code: depot, salesman_code: code,
+                  current: c, baseline: b });
+    }
+    if (!rows.length) return null;
+    return { head: head, rows: rows };
+  },
+
+  /* ==========================================================================
+     V1.7.9 — FUTURE CONTRACT: PUBLISH HISTORY V1 (top-level node, BUKAN
+     source_meta). Read Gateway kelak boleh mengirim node `publish_history`
+     pada action bootstrap / process / result:
+
+       { version: 1, complete: true, timezone: "Asia/Jakarta",
+         period_month: "YYYY-MM-01",
+         rows: [ { batch_id, publish_event_id, domain, depot_code,
+                   period_month, hk, revision_number, created_at } ] }
+
+     complete === true adalah SATU-SATUNYA cara mendapatkan capability
+     COMPLETE. Tidak pernah ditebak dari jumlah batch / revision_number /
+     banyaknya tanggal. Node malformed => null + diagnostic, TIDAK PERNAH
+     dianggap complete.
+
+     V1.7.9.1:
+       - rows: [] dengan complete === true adalah CONTRACT VALID dan bermakna
+         "authority menyatakan seluruh history periode ini tersedia, dan memang
+         TIDAK ADA publish event". Bukan NONE, bukan PARTIAL.
+       - complete === true DAN timezone WAJIB Asia/Jakarta; timezone lain tidak
+         boleh diklaim complete karena grouping tanggal publish memakai WIB.
+       - Satu baris malformah / batch_id duplicate dengan isi berbeda merusak
+         klaim complete: capability diturunkan (PARTIAL/NONE), TIDAK PERNAH
+         tetap COMPLETE dengan subset baris.
+     ========================================================================== */
+  publishHistoryOf: function (payload, diagnostics) {
+    const node = payload ? payload.publish_history : null;
+    if (!node || typeof node !== 'object' || Array.isArray(node)) return null;
+    const note = function (m) { if (diagnostics && diagnostics.length < 40) diagnostics.push(m); };
+    const declared = node.complete === true;
+    /* V1.7.9.2 — contract yang MENGKLAIM complete bersifat all-or-nothing.
+       Satu pelanggaran apa pun membatalkan seluruh contract (return null), lalu
+       PublishHistoryService jatuh ke observable batches (PARTIAL) atau NONE.
+       Subset historical row TIDAK PERNAH dipakai sebagai authoritative, karena
+       tanggal yang barisnya terbuang akan tampil MERAH "Tidak Publish" padahal
+       penyebabnya contract malformed. */
+    const fail = function (m) {
+      note('publish_history: ' + m + (declared
+        ? ' \u2014 klaim complete DIBATALKAN dan contract tidak dipakai.'
+        : ' \u2014 contract tidak dipakai.'));
+      return null;
+    };
+    if (Number(node.version) !== 1)
+      return fail('version tidak didukung (' + this.s(node.version) + ')');
+    const arr = node.rows;
+    if (!Array.isArray(arr)) return fail('rows bukan array');
+    const periodRaw = this.s(node.period_month || '').slice(0, 10);
+    const periodMonth = /^\d{4}-\d{2}-01$/.test(periodRaw) ? periodRaw : null;
+    if (!periodMonth) return fail('period_month tidak valid');
+    /* TIMEZONE STRICT: klaim complete hanya sah bila timezone dinyatakan
+       EKSPLISIT sebagai Asia/Jakarta. Kosong / null / hilang / UTC / zona lain
+       TIDAK PERNAH complete, karena grouping tanggal publish memakai WIB. */
+    const tz = this.s(node.timezone || '').trim();
+    if (declared && tz !== 'Asia/Jakarta')
+      return fail('complete=true tetapi timezone "' + (tz || '(kosong)') + '" bukan Asia/Jakarta');
+
+    const nonNeg = function (v) { return LiveNormalize.numIn(v, 0, null); };
+    const rows = [], byBatch = {};
+    let bad = 0;
+    const badRow = function (i, why) {
+      bad++;
+      note('publish_history: baris ke-' + (i + 1) + ' tidak valid (' + why + ').');
+    };
+    for (let i = 0; i < arr.length; i++) {
+      const r = arr[i];
+      if (!r || typeof r !== 'object' || Array.isArray(r)) { badRow(i, 'bukan object'); continue; }
+      const batchId = this.s(r.batch_id).trim();
+      if (!batchId) { badRow(i, 'batch_id kosong'); continue; }
+      const eventId = this.s(r.publish_event_id).trim();
+      if (!eventId) { badRow(i, 'publish_event_id kosong'); continue; }
+      const domain = String(r.domain || '').toUpperCase();
+      if (domain !== 'PROCESS' && domain !== 'RESULT') { badRow(i, 'domain bukan PROCESS/RESULT'); continue; }
+      const depot = this.code(r.depot_code);
+      if (!depot) { badRow(i, 'depot_code kosong'); continue; }
+      const rowPeriodRaw = this.s(r.period_month || '').slice(0, 10);
+      if (!/^\d{4}-\d{2}-01$/.test(rowPeriodRaw)) { badRow(i, 'period_month baris tidak valid'); continue; }
+      if (rowPeriodRaw !== periodMonth) { badRow(i, 'period_month baris tidak sama dengan node'); continue; }
+      const hk = nonNeg(r.hk);
+      if (hk === null) { badRow(i, 'hk bukan numeric non-negative'); continue; }
+      /* created_at WAJIB benar-benar dapat diubah menjadi instant valid.
+         "ABC" / "2026-99-99" / object / NaN-like DITOLAK, bukan sekadar
+         dicek non-empty. Raw timestamptz TIDAK diubah — hanya dinormalisasi
+         sekali di sini untuk ordering dan grouping WIB. */
+      const rawTs = r.created_at;
+      if (rawTs === null || rawTs === undefined || rawTs === '' ||
+          (typeof rawTs !== 'string' && typeof rawTs !== 'number' && !(rawTs instanceof Date))) {
+        badRow(i, 'created_at bukan timestamp'); continue;
+      }
+      const dt = U.toDate(rawTs);
+      if (!dt || !isFinite(dt.getTime())) { badRow(i, 'created_at tidak dapat diparse'); continue; }
+      const wib = U.wibParts(dt);
+      if (!wib) { badRow(i, 'created_at tidak dapat dikonversi ke WIB'); continue; }
+      /* revision_number OPSIONAL: absen bukan alasan reject. Bila ada tetapi
+         malformed, baris dianggap tidak valid. TIDAK PERNAH dipakai sebagai
+         jumlah publish pada hari yang sama. */
+      let rev = null;
+      if (r.revision_number !== undefined && r.revision_number !== null && r.revision_number !== '') {
+        rev = nonNeg(r.revision_number);
+        if (rev === null) { badRow(i, 'revision_number malformed'); continue; }
+      }
+      /* BATCH IDENTITY = batch_id. Duplicate dengan payload authority IDENTIK
+         boleh di-dedupe defensif; duplicate dengan isi BERBEDA adalah konflik
+         integrity dan membatalkan klaim complete. */
+      const sig = [eventId, domain, depot, rowPeriodRaw, String(hk),
+                   String(rev === null ? '' : rev), String(dt.getTime())].join('|');
+      if (byBatch[batchId] !== undefined) {
+        if (byBatch[batchId] === sig) continue;                 /* duplicate identik */
+        badRow(i, 'batch_id ' + batchId + ' duplicate dengan isi berbeda (konflik integrity)');
+        continue;
+      }
+      byBatch[batchId] = sig;
+      rows.push({
+        batch_id: batchId, publish_event_id: eventId,
+        domain: domain, depot_code: depot, period_month: rowPeriodRaw,
+        hk: hk, revision_number: rev,
+        created_at: rawTs instanceof Date ? rawTs.toISOString() : rawTs,   /* raw dipertahankan */
+        /* normalisasi SEKALI: renderer tidak pernah mem-parse ulang per cell */
+        ts_ms: dt.getTime(),
+        publish_date_wib: String(wib.y) + '-' + U.pad(wib.m) + '-' + U.pad(wib.d),
+        publish_time_wib: wib.hh + ':' + wib.mm + ' WIB',
+        /* optional audit — renderer TIDAK boleh bergantung pada field ini */
+        uploaded_by_name: r.uploaded_by_name || null,
+        source_app: r.source_app || null,
+        source_app_version: r.source_app_version || null,
+        is_active: r.is_active === undefined ? null : !!r.is_active,
+        superseded_at: r.superseded_at || null
+      });
+    }
+    /* FAIL-CLOSED: klaim complete gugur total bila ada satu baris tidak valid. */
+    if (declared && bad > 0)
+      return fail(bad + ' baris historical tidak valid');
+    if (!declared && bad)
+      note('publish_history: ' + bad + ' baris dibuang (contract tidak mengklaim complete).');
+    /* rows: [] dengan complete === true adalah CONTRACT VALID: authority
+       menyatakan seluruh history periode ini tersedia dan memang nihil. */
+    if (!rows.length && !declared) return fail('tidak ada baris valid dan bukan complete authoritative');
+    return { version: 1, complete: declared, declaredComplete: declared,
+             timezone: tz || null,
+             periodMonth: periodMonth, rows: rows, rejected: bad,
+             authoritativeEmpty: declared && rows.length === 0 };
   },
 
   /* ---- MASTER DEPOT → organisasi ---- */
@@ -3384,6 +3899,8 @@ const LiveLoader = {
         };
       });
 
+      /* V1.7.9 — future contract publish_history boleh datang di bootstrap. */
+      LiveLoader.absorbPublishHistory(d, 'BOOTSTRAP');
       S.loadedAt = new Date().toISOString();
       S.status.bootstrap = 'ready';
       S.bump();
@@ -3519,6 +4036,7 @@ const LiveLoader = {
       if (ppsNotes.length) ppsNotes.forEach(function (n) {
         const t = 'PROSES PERIOD · ' + n; if (S.notes.indexOf(t) < 0) S.notes.push(t); });
       (d.schema_notes || []).forEach(function (n) { if (S.notes.indexOf(n) < 0) S.notes.push(n); });
+      LiveLoader.absorbPublishHistory(d, 'PROCESS');
       S.status.process = 'ready';
       S.bump();
       return S;
@@ -3641,6 +4159,79 @@ const LiveLoader = {
         else bdRows[at] = rec;
       });
 
+      /* ====================================================================
+         V1.7.9 — FUTURE CONTRACT: RESULT DAILY SALESMAN V1.
+         Parsing SEKALI di loader (bukan renderer). Index Depo|Tanggal ->
+         daftar salesman supaya agregasi Project O(1) tanpa scan ulang.
+         Extension malformed => dianggap unavailable; jalur TOTAL DEPO existing
+         dan RESULT MTD sama sekali tidak terganggu.
+         ==================================================================== */
+      const dsNotes = [], dsRows = [], dsByDepotDate = {}, dsByDate = {},
+            dsDepotSeen = {}, dsDateSeen = {};
+      let dsVersion = null, dsBasis = null, dsRowsBasis = null;
+      (d.batches || []).forEach(function (b) {
+        let rows = null;
+        try { rows = LiveNormalize.resultDailySalesmanOf(b, S.org, dsNotes); }
+        catch (err) {
+          rows = null;
+          if (dsNotes.length < 40) dsNotes.push('Depo ' + LiveNormalize.code(b && b.depot_code) +
+            ': result_daily_salesman gagal dibaca (' + ((err && err.message) || 'tidak diketahui') + ').');
+        }
+        if (!rows) return;
+        rows.forEach(function (r) {
+          dsVersion = r.source_version; dsBasis = r.date_basis; dsRowsBasis = r.rows_basis;
+          const k = r.depot_code + '|' + r.report_date;
+          (dsByDepotDate[k] || (dsByDepotDate[k] = [])).push(r);
+          (dsByDate[r.report_date] || (dsByDate[r.report_date] = [])).push(r);
+          dsRows.push(r);
+          dsDepotSeen[r.depot_code] = 1; dsDateSeen[r.report_date] = 1;
+        });
+      });
+
+      /* ====================================================================
+         V1.7.9 — FUTURE CONTRACT: RESULT BASELINE SALESMAN V1.
+         Index salesman_code -> pasangan current/baseline. Header comparison
+         (period, HK, cutoff, basis) diambil apa adanya dari Website ASS.
+         ==================================================================== */
+      const bsNotes = [], bsRows = [], bsBySalesman = {}, bsHeads = [];
+      (d.batches || []).forEach(function (b) {
+        let pack = null;
+        try { pack = LiveNormalize.resultBaselineSalesmanOf(b, S.org, bsNotes); }
+        catch (err) {
+          if (bsNotes.length < 40) bsNotes.push('Depo ' + LiveNormalize.code(b && b.depot_code) +
+            ': result_baseline_salesman gagal dibaca (' + ((err && err.message) || 'tidak diketahui') + ').');
+        }
+        if (!pack) return;
+        bsHeads.push(pack.head);
+        pack.rows.forEach(function (r) {
+          const at = bsBySalesman[r.salesman_code];
+          /* revisi aktif terakhir per salesman menang (batch terakhir diproses) */
+          if (at === undefined) { bsBySalesman[r.salesman_code] = bsRows.length; bsRows.push(r); }
+          else bsRows[at] = r;
+        });
+      });
+      /* Header comparison harus konsisten antar Depo; bila campur, tandai mixed. */
+      let bsHeader = null;
+      if (bsHeads.length) {
+        const h0 = bsHeads[0];
+        const same = function (k) { return bsHeads.every(function (h) { return String(h[k]) === String(h0[k]); }); };
+        bsHeader = {
+          authority: h0.authority, scope: 'SALESMAN',
+          comparison_basis: same('comparison_basis') ? h0.comparison_basis : null,
+          current_period_month: same('current_period_month') ? h0.current_period_month : null,
+          current_hk: same('current_hk') ? h0.current_hk : null,
+          current_cutoff_date: same('current_cutoff_date') ? h0.current_cutoff_date : null,
+          baseline_period_month: same('baseline_period_month') ? h0.baseline_period_month : null,
+          baseline_hk: same('baseline_hk') ? h0.baseline_hk : null,
+          baseline_cutoff_date: same('baseline_cutoff_date') ? h0.baseline_cutoff_date : null,
+          depots: bsHeads.length,
+          mixed: !(same('comparison_basis') && same('current_period_month') && same('current_hk') &&
+                   same('baseline_period_month') && same('baseline_hk'))
+        };
+        if (bsHeader.mixed && bsNotes.length < 40)
+          bsNotes.push('result_baseline_salesman: basis comparison berbeda antar Depo — pasangan dianggap tidak comparable.');
+      }
+
       S.result = {
         periodMonth: d.period_month || null,
         hkMax: hkMax,
@@ -3653,8 +4244,24 @@ const LiveLoader = {
                       depots: Object.keys(ddDepotSeen), dates: ddDates,
                       available: ddRows.length > 0, notes: ddNotes },
         baselineDepot: { rows: bdRows, byDepot: bdByDepot,
-                         available: bdRows.length > 0, notes: bdNotes }
+                         available: bdRows.length > 0, notes: bdNotes },
+        dailySalesman: { rows: dsRows, byDepotDate: dsByDepotDate, byDate: dsByDate,
+                         depots: Object.keys(dsDepotSeen), dates: Object.keys(dsDateSeen).sort(),
+                         available: dsRows.length > 0, version: dsVersion,
+                         dateBasis: dsBasis, rowsBasis: dsRowsBasis, notes: dsNotes },
+        baselineSalesman: { rows: bsRows, bySalesman: bsBySalesman, heads: bsHeads,
+                            /* Depo yang contract baselinenya DITERIMA utuh (fail-closed). */
+                            depots: bsHeads.map(function (h) { return h.depot_code; }),
+                            header: bsHeader,
+                            /* tidak comparable => TIDAK dipakai, bukan dipakai sebagian */
+                            available: bsRows.length > 0 && !!bsHeader && !bsHeader.mixed,
+                            version: bsRows.length ? 1 : null, notes: bsNotes }
       };
+      LiveLoader.absorbPublishHistory(d, 'RESULT');
+      if (dsNotes.length) dsNotes.forEach(function (n) {
+        const t = 'HASIL DAILY SALESMAN · ' + n; if (S.notes.indexOf(t) < 0) S.notes.push(t); });
+      if (bsNotes.length) bsNotes.forEach(function (n) {
+        const t = 'HASIL BASELINE SALESMAN · ' + n; if (S.notes.indexOf(t) < 0) S.notes.push(t); });
       if (ddNotes.length) ddNotes.forEach(function (n) {
         const t = 'HASIL · ' + n; if (S.notes.indexOf(t) < 0) S.notes.push(t); });
       if (bdNotes.length) bdNotes.forEach(function (n) {
@@ -3672,6 +4279,81 @@ const LiveLoader = {
     });
   },
 
+  /* ==========================================================================
+     V1.7.9.4 — FUTURE CONTRACT: node top-level `publish_history` dari action
+     mana pun (bootstrap / process / result).
+
+     Setiap payload yang membawa node publish_history adalah SNAPSHOT/statement
+     authoritative TERBARU dan MENGGANTIKAN state sebelumnya secara atomic.
+     Payload tanpa node TIDAK mengubah state (backward compatible untuk action
+     yang response contract-nya belum membawa extension ini).
+     Tidak ada union/merge rows antar response — lihat detail di dalam fungsi.
+     ========================================================================== */
+  absorbPublishHistory: function (payload, sourceLabel) {
+    const S = LiveDataStore;
+    /* ======================================================================
+       V1.7.9.4 — ATOMIC REPLACEMENT.
+
+       Setiap payload yang MEMBAWA node publish_history adalah SNAPSHOT /
+       statement authoritative TERBARU dari Read Gateway dan MENGGANTIKAN state
+       sebelumnya secara atomic. Payload TANPA node tidak mengubah state.
+
+       TIDAK ADA union/merge rows antar response, termasuk ketika period_month
+       kebetulan sama: snapshot terbaru yang menyatakan rows: [] berarti
+       "periode ini lengkap dan memang tidak ada publish", bukan "pertahankan
+       rows lama". Producer wajib mengirim node ini sebagai snapshot penuh,
+       bukan incremental delta.
+
+       Semantik property:
+         ABSENT  (tidak ada property)  -> tidak ada statement, state dibiarkan.
+         PRESENT (termasuk null)       -> statement baru; bila tidak sah, state
+                                          authoritative DIRESET ke default.
+       Action asal (bootstrap/process/result) tidak mengubah semantik ini.
+       Proteksi stale/generation LiveGateway existing tidak disentuh: response
+       usang sudah dibuang sebelum loader memanggil fungsi ini.
+       ====================================================================== */
+    if (!payload || !Object.prototype.hasOwnProperty.call(payload, 'publish_history'))
+      return S.publishHistory;
+
+    const notes = [];
+    let pack = null;
+    if (payload.publish_history === null) {
+      notes.push('publish_history dikirim null \u2014 authoritative state direset.');
+    } else {
+      try { pack = LiveNormalize.publishHistoryOf(payload, notes); }
+      catch (err) {
+        notes.push('publish_history gagal dibaca (' + ((err && err.message) || 'tidak diketahui') + ').');
+        pack = null;
+      }
+    }
+    if (notes.length) notes.forEach(function (n) {
+      const t = 'PUBLISH HISTORY \u00b7 ' + String(sourceLabel || '') + ' \u00b7 ' + n;
+      if (S.notes.indexOf(t) < 0) S.notes.push(t);
+    });
+
+    /* Kandidat SELALU dimulai dari default: tidak ada satu pun field state lama
+       (complete / declaredComplete / timezone / periodMonth / rows / rejected /
+       authoritativeEmpty) yang diwariskan ke statement baru. */
+    const next = LiveDataStore.defaultPublishHistory();
+    next.notes = notes;
+
+    if (!pack) {                       /* node hadir tetapi tidak sah -> reset penuh */
+      S.publishHistory = next;         /* SATU COMMIT */
+      return S.publishHistory;
+    }
+
+    next.available = true;
+    next.version = pack.version;
+    next.complete = pack.complete;
+    next.declaredComplete = pack.declaredComplete;
+    next.timezone = pack.timezone;
+    next.periodMonth = pack.periodMonth;
+    next.rows = pack.rows.slice();     /* HANYA rows snapshot terbaru */
+    next.rejected = pack.rejected;
+    next.authoritativeEmpty = pack.complete === true && pack.rows.length === 0;
+    S.publishHistory = next;           /* SATU COMMIT */
+    return S.publishHistory;
+  },
   _batchIndex: {},
   _mergeBatchIndex: function (idx) {
     for (const k in idx) if (Object.prototype.hasOwnProperty.call(idx, k)) this._batchIndex[k] = idx[k];
@@ -3797,6 +4479,12 @@ const ApiDataProvider = (function () {
     getProcessPeriodSummary: function () { return S.process.periodSummary; },
     getResultDailyDepot: function () { return S.result.dailyDepot; },
     getResultBaselineDepot: function () { return S.result.baselineDepot; },
+    /* V1.7.9 — future contract stores. Sengaja DI LUAR rowMethods: filter
+       Coverage Project diterapkan eksplisit oleh service, bukan oleh facade,
+       karena grain-nya salesman dan butuh agregasi Depo yang benar. */
+    getResultDailySalesman: function () { return S.result.dailySalesman; },
+    getResultBaselineSalesman: function () { return S.result.baselineSalesman; },
+    getPublishHistory: function () { return S.publishHistory; },
     getResultTargets: function () { return S.result.targets.slice(); },
     getResultDailyEceran: function () { return S.result.dailyEceran.slice(); },
     getResultMtdEceran: function () { return S.result.mtdEceran.slice(); },
@@ -3909,6 +4597,8 @@ const ProviderHub = {
       /* V1.7.7 — extension source_meta + jalur TOTAL DEPO (sengaja di luar rowMethods
          sehingga tidak terkena filter Coverage Salesman). */
       'getProcessDepotSummary', 'getProcessPeriodSummary', 'getResultDailyDepot', 'getResultBaselineDepot', 'getResultMtdRecordsRaw',
+      /* V1.7.9 — future contract (additive; provider tanpa method ini mengembalikan undefined) */
+      'getResultDailySalesman', 'getResultBaselineSalesman', 'getPublishHistory',
       'getRankingRecords', 'getRankingResultMtdRecords'];
     const f = {};
     passthrough.concat(optional).forEach(function (name) {
@@ -3992,6 +4682,260 @@ const SCHEMA_HINT = {
    Renderer TIDAK PERNAH menyentuh array data mentah.
    Mengganti DemoDataProvider -> ApiDataProvider cukup di sini.
    ========================================================================= */
+/* ============================================================================
+   LAYER 4C — RESULT CAPABILITY REGISTRY (V1.7.9)
+   ----------------------------------------------------------------------------
+   SATU tempat untuk menjawab "authority apa yang tersedia?".
+
+   Renderer dan service TIDAK BOLEH memparsing source_meta sendiri. Alur resmi:
+     SOURCE -> VALIDATE (LiveNormalize) -> NORMALIZE (LiveDataStore)
+            -> CAPABILITY DETECTION (di sini) -> SCOPE -> AGGREGATE -> RENDER
+
+   SOURCE PRIORITY FINAL:
+     HASIL KERJA DAILY
+       Coverage Semua Salesman : result_daily_depot V2 (TOTAL DEPO authority)
+                                 -> legacy hanya bila memang existing fallback.
+       Coverage Project        : result_daily_salesman V1
+                                 -> granular salesman existing (public.result_daily)
+                                 -> unavailable. TIDAK PERNAH Total Depo.
+     DETAIL MTD BASELINE
+       Coverage Semua Salesman : result_baseline_depot V1
+       Coverage Project        : result_baseline_salesman V1
+                                 -> unavailable. TIDAK PERNAH baseline Depo.
+     PUBLISH HISTORY
+       publish_history V1 complete === true -> COMPLETE
+       observable current batches           -> PARTIAL
+       tidak ada sumber usable              -> NONE
+
+   Snapshot di-cache per (rev data x rev Coverage Project) sehingga pemeriksaan
+   capability tidak pernah menjadi biaya per-render.
+   ========================================================================= */
+const ResultCapabilities = {
+  _key: '', _snap: null,
+  _rev: function () {
+    let rev = 0;
+    try { rev = ProviderHub.facade.rev(); } catch (e) { rev = 0; }
+    let prev = 0, pkey = '';
+    try {
+      prev = (typeof SalesmanProjectScope !== 'undefined') ? SalesmanProjectScope.rev : 0;
+      pkey = (typeof SalesmanProjectScope !== 'undefined' && !SalesmanProjectScope.isAll())
+        ? SalesmanProjectScope.projectKey(SalesmanProjectScope.selected()) : '';
+    } catch (e) { prev = 0; pkey = ''; }
+    let mode = 'demo';
+    try { mode = ProviderHub.mode(); } catch (e) { mode = 'demo'; }
+    return [mode, rev, prev, pkey].join('|');
+  },
+  _store: function (name) {
+    try {
+      const f = ProviderHub.facade;
+      if (typeof f[name] !== 'function') return null;
+      return f[name]() || null;
+    } catch (e) { return null; }
+  },
+  snapshot: function () {
+    const key = this._rev();
+    if (this._snap && this._key === key) return this._snap;
+    const live = (function () { try { return ProviderHub.isLive(); } catch (e) { return false; } })();
+    const dd = this._store('getResultDailyDepot');
+    const ds = this._store('getResultDailySalesman');
+    const bd = this._store('getResultBaselineDepot');
+    const bs = this._store('getResultBaselineSalesman');
+    const projectActive = (typeof SalesmanProjectScope !== 'undefined') && !SalesmanProjectScope.isAll();
+    /* Mode publish history dihitung oleh PublishHistoryService yang memegang
+       kontrak V1 sekaligus observable batches. Guard typeof: registry ini
+       didefinisikan lebih awal, tetapi hanya dipanggil saat runtime. */
+    let phMode = 'NONE', phSource = 'NONE';
+    try {
+      if (typeof PublishHistoryService !== 'undefined') {
+        const m = PublishHistoryService.mode();
+        phMode = m.mode; phSource = m.source;
+      }
+    } catch (e) { phMode = 'NONE'; phSource = 'NONE'; }
+    const snap = {
+      live: live,
+      projectActive: projectActive,
+      projectLabel: (typeof SalesmanProjectScope !== 'undefined') ? SalesmanProjectScope.label() : '',
+      dailyDepotAvailable: !!(live && dd && dd.available && dd.rows && dd.rows.length),
+      dailySalesmanAvailable: !!(live && ds && ds.available && ds.rows && ds.rows.length),
+      dailySalesmanVersion: ds ? ds.version : null,
+      dailySalesmanRowsBasis: ds ? ds.rowsBasis : null,
+      baselineDepotAvailable: !!(live && bd && bd.available && bd.rows && bd.rows.length),
+      baselineSalesmanAvailable: !!(live && bs && bs.available && bs.rows && bs.rows.length),
+      baselineSalesmanHeader: (bs && bs.available) ? bs.header : null,
+      publishHistoryMode: phMode,
+      publishHistorySource: phSource
+    };
+    /* Authority efektif — inilah yang dibaca service, sehingga tidak ada
+       pemeriksaan source yang tersebar di renderer. */
+    snap.dailyAuthority = projectActive
+      ? (snap.dailySalesmanAvailable ? 'RESULT_DAILY_SALESMAN_V1' : 'SCOPED_GRANULAR_OR_NONE')
+      : (snap.dailyDepotAvailable ? 'RESULT_DAILY_DEPOT_V2' : 'LEGACY');
+    snap.baselineAuthority = projectActive
+      ? (snap.baselineSalesmanAvailable ? 'RESULT_BASELINE_SALESMAN_V1' : 'UNAVAILABLE')
+      : (snap.baselineDepotAvailable ? 'RESULT_BASELINE_DEPOT_V1' : 'UNAVAILABLE');
+    this._key = key; this._snap = snap;
+    return snap;
+  },
+
+  /* ==========================================================================
+     V1.7.9.1 — COMPLETENESS FOR SCOPE (PARTIAL ROLLOUT GUARD).
+
+     Future contract akan dirilis BERTAHAP per Depo dari Website ASS. Bila baru
+     sebagian Depo mengirimkannya, parent Regional/Nasional TIDAK BOLEH
+     menampilkan hasil subset seolah-olah itu angka Project yang lengkap.
+
+     EXPECTED DEPOT SET (generic, tanpa hardcode project apa pun):
+       salesman member Project aktif (Master Salesman / SalesmanProjectScope)
+       -> canonical depot_code lewat organization graph existing
+       -> disaring Monitoring Scope + Regional/Cabang/Depo aktif
+       -> disaring status Master Cabang 'monitoring'.
+
+     AVAILABLE DEPOT SET:
+       HANYA Depo yang punya contract future VALID (parser fail-closed).
+       Punya Daily Depot V2 / result_mtd / batch RESULT / source_meta lain
+       TIDAK membuat sebuah Depo dianggap tersedia.
+
+     completeForScope = expected > 0 DAN missing = 0.
+     Renderer TIDAK menghitung ulang coverage; cukup membaca hasil di sini.
+     Cache mempertimbangkan rev data, Project aktif, Monitoring Scope, dan
+     scope drilldown aktif sehingga tidak pernah stale.
+     ========================================================================== */
+  _cKey: '', _cVal: null,
+  _scopeKey: function (scope) {
+    const sc = scope || {};
+    let ms = 0;
+    try { ms = (typeof MonitoringScope !== 'undefined') ? MonitoringScope.rev : 0; } catch (e) { ms = 0; }
+    let orgRev = 0;
+    try { orgRev = (typeof OrgResolver !== 'undefined' ? OrgResolver.rev : 0) | 0; } catch (e) { orgRev = 0; }
+    let period = '';
+    try {
+      const f = ProviderHub.facade;
+      period = (typeof f.resultPeriodMonth === 'function' ? f.resultPeriodMonth() : '') || '';
+    } catch (e) { period = ''; }
+    return [this._rev(), ms, orgRev, period, sc.regional || '', sc.branch || '', sc.depot || '',
+            sc.ass || '', sc.salesman || ''].join('|');
+  },
+  _depotAllowed: function (code) {
+    try { return MasterCabangAuthority.allowed(code, 'monitoring'); } catch (e) { return true; }
+  },
+  _scopeDepotSet: function (scope) {
+    try { return OrgResolver.depotSetOf(scope || {}) || {}; } catch (e) { return {}; }
+  },
+  completeness: function (scope) {
+    const key = this._scopeKey(scope);
+    if (this._cVal && this._cKey === key) return this._cVal;
+    const snap = this.snapshot();
+    const out = {
+      projectActive: snap.projectActive, projectLabel: snap.projectLabel,
+      expectedDepots: [], expectedCount: 0, expectedSalesmen: 0, hasProjectMember: false,
+      daily: { available: snap.dailySalesmanAvailable, expectedDepots: 0, availableDepots: 0,
+               missingDepots: 0, completeForScope: false, state: 'ABSENT' },
+      baseline: { available: snap.baselineSalesmanAvailable, expectedDepots: 0, availableDepots: 0,
+                  missingDepots: 0, missingSalesmen: 0, completeForScope: false, state: 'ABSENT' }
+    };
+    if (!snap.projectActive) { this._cKey = key; this._cVal = out; return out; }
+
+    /* ---- EXPECTED: member Project -> canonical Depo -> scope ---- */
+    let members = null, org = null;
+    try { members = SalesmanProjectScope.activeSet(); } catch (e) { members = null; }
+    try { org = ProviderHub.facade.org(); } catch (e) { org = null; }
+    const scopeSet = this._scopeDepotSet(scope);
+    const expectedDepotSet = {}, expectedSalesmen = [];
+    /* Map salesman_code -> canonical depot. Dibangun sekali per cache key dan
+       bekerja untuk semua bentuk organization graph (byCode maupun list). */
+    let byCode = (org && org.byCode && org.byCode.salesman) ? org.byCode.salesman : null;
+    if (!byCode) {
+      byCode = {};
+      const list = (org && org.salesmen) || [];
+      for (let i = 0; i < list.length; i++) {
+        const sm = list[i];
+        const c = String((sm && sm.salesman_code) === undefined || sm.salesman_code === null ? '' : sm.salesman_code).trim();
+        if (c && byCode[c] === undefined) byCode[c] = sm;
+      }
+    }
+    if (members && members.size) {
+      const self = this;
+      members.forEach(function (code) {
+        const sm = byCode[code];
+        if (!sm || !sm.depot_code) return;                 /* tidak dikenal graph -> tidak diklaim */
+        const d = sm.depot_code;
+        if (!scopeSet[d]) return;                          /* di luar Monitoring Scope / drilldown */
+        if (!self._depotAllowed(d)) return;
+        expectedDepotSet[d] = 1;
+        expectedSalesmen.push({ code: code, depot: d });
+      });
+    }
+    const expected = Object.keys(expectedDepotSet);
+    out.expectedDepots = expected;
+    out.expectedCount = expected.length;
+    out.expectedSalesmen = expectedSalesmen.length;
+    out.hasProjectMember = expected.length > 0;
+
+    /* ---- AVAILABLE: hanya Depo dengan contract future VALID ---- */
+    const availOf = function (storeName) {
+      const set = {};
+      try {
+        const f = ProviderHub.facade;
+        if (typeof f[storeName] !== 'function') return set;
+        const st = f[storeName]();
+        if (!st || !st.available || !st.depots) return set;
+        for (let i = 0; i < st.depots.length; i++) set[st.depots[i]] = 1;
+      } catch (e) { /* store absen = tidak ada Depo tersedia */ }
+      return set;
+    };
+    const dailyAvail = availOf('getResultDailySalesman');
+    const baseAvail = availOf('getResultBaselineSalesman');
+
+    function fill(target, availSet) {
+      let have = 0;
+      const missing = [];
+      for (let i = 0; i < expected.length; i++) {
+        if (availSet[expected[i]]) have++;
+        else missing.push(expected[i]);
+      }
+      target.expectedDepots = expected.length;
+      target.availableDepots = have;
+      target.missingDepots = missing.length;
+      target.missingList = missing;
+      target.completeForScope = expected.length > 0 && missing.length === 0;
+      target.state = expected.length === 0 ? 'NO_MEMBER'
+                   : have === 0 ? 'ABSENT'
+                   : target.completeForScope ? 'COMPLETE' : 'PARTIAL';
+      return target;
+    }
+    fill(out.daily, dailyAvail);
+    fill(out.baseline, baseAvail);
+
+    /* ---- Baseline: cek salesman-level konservatif ----
+       Contract baseline berscope SALESMAN dan diterima secara fail-closed per
+       Depo, jadi Depo yang diterima WAJIB memuat seluruh member Project-nya.
+       Member yang Deponya memang belum mengirim contract sudah terhitung pada
+       missingDepots dan tidak dihitung dua kali. */
+    let bySalesman = null;
+    try {
+      const st = ProviderHub.facade.getResultBaselineSalesman();
+      bySalesman = (st && st.available) ? st.bySalesman : null;
+    } catch (e) { bySalesman = null; }
+    if (bySalesman) {
+      let missSm = 0;
+      for (let i = 0; i < expectedSalesmen.length; i++) {
+        const e = expectedSalesmen[i];
+        if (!baseAvail[e.depot]) continue;                 /* Depo-nya sudah dihitung missing */
+        if (bySalesman[e.code] === undefined) missSm++;
+      }
+      out.baseline.missingSalesmen = missSm;
+      if (missSm > 0) {
+        out.baseline.completeForScope = false;
+        if (out.baseline.state === 'COMPLETE') out.baseline.state = 'PARTIAL';
+      }
+    }
+    this._cKey = key; this._cVal = out;
+    return out;
+  },
+  invalidate: function () { this._key = ''; this._snap = null; this._cKey = ''; this._cVal = null; }
+};
+window.ResultCapabilities = ResultCapabilities;
+
 const DashboardService = (function (DP) {
 
   const PERIODS = [
@@ -5234,7 +6178,340 @@ const DashboardService = (function (DP) {
     }
   };
 
+  /* ==========================================================================
+     V1.7.8 — RESULT DAILY SCOPED SERVICE (COVERAGE SALESMAN / PROJECT).
+
+     MASALAH YANG DIPERBAIKI:
+       result_daily_depot V2 bergrain DEPO. Saat Coverage Salesman berada pada
+       sebuah Project, Monitoring Harian dan Trend sebelumnya tetap menampilkan
+       TOTAL DEPO — angka tersebut menyesatkan karena seolah sudah terfilter.
+
+     AUTHORITY (V1.7.9 — dipilih lewat ResultCapabilities, bukan parsing lokal):
+       1. source_meta.result_daily_salesman V1  (FUTURE CONTRACT, prioritas 1).
+          Grain SALESMAN x TANGGAL ORDER dari Website ASS. Begitu producer
+          mengirimkannya, jalur ini AKTIF OTOMATIS tanpa perubahan code dan
+          tanpa feature flag.
+       2. granular salesman existing (public.result_daily -> dailyRecords),
+          diakses lewat DP.getResultDailyRecords() yang SUDAH melewati
+          SalesmanProjectScope. Ini tetap authority salesman-level yang sah.
+       3. unavailable — jujur.
+       TIDAK ADA rekonstruksi/proporsi dari result_daily_depot. Total Depo
+       TIDAK PERNAH menjadi fallback saat Coverage Project aktif.
+
+     FORMULA (identik untuk Monitoring Harian dan Trend — satu service):
+       Depo x tanggal : Omset  = SUM omset salesman Project yang valid;
+                        Avg EC = ARITHMETIC MEAN ec_count salesman Project yang
+                                 ACTIVE pada tanggal tsb. Salesman active dengan
+                                 ec_count = 0 MASUK denominator sebagai 0;
+                                 salesman tanpa row / tidak active TIDAK
+                                 dianggap 0 dan tidak masuk denominator.
+       Parent         : Omset  = SUM antar Depo valid;
+                        Avg EC = ARITHMETIC MEAN antar Depo valid (1 Depo = 1 suara).
+                        Tidak pernah weighted by salesman / omset / EC.
+     Index dibangun SEKALI per (rev data x rev Project) -> lookup O(1).
+     ========================================================================== */
+  const ResultDailyScoped = {
+    METRICS: [
+      { key: 'omset', label: 'Omset', totalLabel: 'TOTAL MTD' },
+      { key: 'avg_ec', label: 'Avg EC', totalLabel: 'AVG MTD' }
+    ],
+    NOTE: 'Data harian mengikuti Coverage Salesman aktif dan dihitung dari granular Salesman × Tanggal.',
+    UNAVAILABLE: 'Data harian per Salesman belum tersedia untuk Coverage Project ini. ' +
+      'Angka Total Depo sengaja tidak ditampilkan agar tidak menyesatkan.',
+    _key: '', _idx: null,
+
+    projectActive: function () {
+      return typeof SalesmanProjectScope !== 'undefined' && !SalesmanProjectScope.isAll();
+    },
+    cacheKey: function () {
+      let rev = 0;
+      try { rev = typeof DP.rev === 'function' ? DP.rev() : 0; } catch (e) { rev = 0; }
+      const pk = this.projectActive() ? SalesmanProjectScope.projectKey(SalesmanProjectScope.selected()) : '';
+      return String(rev) + '|' + String(SalesmanProjectScope.rev) + '|' + pk;
+    },
+    /* index: depot|date -> { omset, hasOmset, ec[] } ; dates[] ; depots[] */
+    index: function () {
+      const key = this.cacheKey();
+      if (this._idx && this._key === key) return this._idx;
+      const empty = { byDepotDate: {}, dates: [], depots: [], available: false,
+                      records: 0, source: 'NONE' };
+      if (!isLiveMode()) { this._key = key; this._idx = empty; return empty; }
+      const out = this._fromDailySalesmanV1() || this._fromGranularRecords() || empty;
+      this._key = key; this._idx = out;
+      return out;
+    },
+    /* ---- PRIORITAS 1: FUTURE CONTRACT result_daily_salesman V1 ---- */
+    _fromDailySalesmanV1: function () {
+      let cap = null;
+      try { cap = ResultCapabilities.snapshot(); } catch (e) { cap = null; }
+      if (!cap || !cap.dailySalesmanAvailable) return null;
+      let store = null;
+      try { store = DP.getResultDailySalesman(); } catch (e) { store = null; }
+      if (!store || !store.available || !store.rows || !store.rows.length) return null;
+      /* Membership Project = Set salesman_code -> lookup O(1), generic untuk
+         project apa pun (TX2DA / AEGDA / project future). Tidak ada hardcode. */
+      const allowed = SalesmanProjectScope.activeSet();
+      const byDepotDate = {}, dateSeen = {}, depotSeen = {};
+      const rows = store.rows;
+      for (let i = 0; i < rows.length; i++) {
+        const r = rows[i];
+        if (allowed && !allowed.has(r.salesman_code)) continue;
+        if (!MasterCabangAuthority.allowed(r.depot_code, 'monitoring')) continue;
+        const k = r.depot_code + '|' + r.report_date;
+        let bag = byDepotDate[k];
+        if (!bag) bag = byDepotDate[k] = { omset: 0, hasOmset: false, ec: [] };
+        if (r.omset !== null && isFinite(r.omset)) { bag.omset += r.omset; bag.hasOmset = true; }
+        /* Denominator Avg EC = salesman ACTIVE saja. ec_count 0 pada salesman
+           active tetap masuk sebagai 0; salesman tidak active dikeluarkan. */
+        if (r.salesman_active === true && r.ec !== null && isFinite(r.ec)) bag.ec.push(r.ec);
+        dateSeen[r.report_date] = 1; depotSeen[r.depot_code] = 1;
+      }
+      const dates = Object.keys(dateSeen).sort();
+      if (!dates.length) return null;
+      return { byDepotDate: byDepotDate, dates: dates, depots: Object.keys(depotSeen),
+               available: true, records: rows.length, source: 'RESULT_DAILY_SALESMAN_V1' };
+    },
+    /* ---- PRIORITAS 2: granular salesman existing (public.result_daily) ---- */
+    _fromGranularRecords: function () {
+      if (typeof DP.getResultDailyRecords !== 'function') return null;
+      let recs = [];
+      /* scope {} = seluruh Monitoring Scope. Facade sudah menerapkan
+         SalesmanProjectScope.filterRows sehingga hasilnya benar-benar scoped. */
+      try { recs = DP.getResultDailyRecords({ from: null, to: null }, {}) || []; }
+      catch (e) { recs = []; }
+      if (!recs.length) return null;
+      const byDepotDate = {}, dateSeen = {}, depotSeen = {};
+      for (let i = 0; i < recs.length; i++) {
+        const r = recs[i];
+        if (!r || !r.report_date || !r.depot_code) continue;
+        if (r.salesman_active === false) continue;
+        const d = String(r.report_date).slice(0, 10);
+        const k = r.depot_code + '|' + d;
+        let bag = byDepotDate[k];
+        if (!bag) bag = byDepotDate[k] = { omset: 0, hasOmset: false, ec: [] };
+        if (r.omset !== null && r.omset !== undefined && isFinite(r.omset)) {
+          bag.omset += Number(r.omset); bag.hasOmset = true;
+        }
+        if (r.ec !== null && r.ec !== undefined && isFinite(r.ec)) bag.ec.push(Number(r.ec));
+        dateSeen[d] = 1; depotSeen[r.depot_code] = 1;
+      }
+      const dates = Object.keys(dateSeen).sort();
+      if (!dates.length) return null;
+      return { byDepotDate: byDepotDate, dates: dates, depots: Object.keys(depotSeen),
+               available: true, records: recs.length, source: 'RESULT_DAILY_GRANULAR' };
+    },
+    /* Aktif hanya bila Coverage Project sedang dipilih. */
+    engaged: function () { return isLiveMode() && this.projectActive(); },
+    available: function () { return this.engaged() && this.index().available; },
+
+    dates: function () { return this.index().dates.slice(); },
+    depotsFor: function (scope) {
+      const idx = this.index(); if (!idx.available) return [];
+      const set = depotSetInScope(scope || {}), out = [];
+      for (let i = 0; i < idx.depots.length; i++) {
+        const c = idx.depots[i];
+        if (set[c] && MasterCabangAuthority.allowed(c, 'monitoring')) out.push(c);
+      }
+      return out;
+    },
+    depotValue: function (depotCode, date, metricKey) {
+      const bag = this.index().byDepotDate[depotCode + '|' + date];
+      if (!bag) return null;                          /* missing != 0 */
+      if (metricKey === 'omset') return bag.hasOmset ? bag.omset : null;
+      return meanValid(bag.ec);
+    },
+    valueFor: function (depotCodes, date, metricKey) {
+      const vals = [];
+      for (let i = 0; i < depotCodes.length; i++) {
+        const v = this.depotValue(depotCodes[i], date, metricKey);
+        if (v === null || v === undefined || !isFinite(v)) continue;
+        vals.push(v);
+      }
+      if (!vals.length) return null;
+      return metricKey === 'omset' ? sumValid(vals) : meanValid(vals);
+    },
+    /* MTD kolom kanan: authority result_mtd yang SUDAH ter-filter Project
+       (DP.getResultMtdRecords lewat facade). Parent memakai aturan yang sama. */
+    mtdFor: function (depotCodes, metricKey, scope) {
+      if (typeof DP.getResultMtdRecords !== 'function') return null;
+      const set = {};
+      for (let i = 0; i < depotCodes.length; i++) set[depotCodes[i]] = 1;
+      let recs = [];
+      try { recs = DP.getResultMtdRecords(scope || {}) || []; } catch (e) { recs = []; }
+      const seen = {}, perDepot = {};
+      for (let i = 0; i < recs.length; i++) {
+        const r = recs[i];
+        if (!r || !set[r.depot_code]) continue;
+        const k = r.salesman_code + '@' + r.depot_code + '@' + (r.period_month || '');
+        if (seen[k]) continue;
+        seen[k] = 1;
+        const bag = perDepot[r.depot_code] || (perDepot[r.depot_code] = { omset: 0, hasOmset: false, ec: [] });
+        if (metricKey === 'omset') {
+          if (r.omset !== null && r.omset !== undefined && isFinite(r.omset)) { bag.omset += r.omset; bag.hasOmset = true; }
+        } else if (r.avg_ec_mtd !== null && r.avg_ec_mtd !== undefined && isFinite(Number(r.avg_ec_mtd))) {
+          bag.ec.push(Number(r.avg_ec_mtd));
+        }
+      }
+      const perDepotValues = [];
+      for (const d in perDepot) {
+        const bag = perDepot[d];
+        if (metricKey === 'omset') { if (bag.hasOmset) perDepotValues.push(bag.omset); }
+        else { const m = meanValid(bag.ec); if (m !== null) perDepotValues.push(m); }
+      }
+      if (!perDepotValues.length) return null;
+      return metricKey === 'omset' ? sumValid(perDepotValues) : meanValid(perDepotValues);
+    },
+    childLevelOf: function (scope) {
+      const lvl = levelOf(scope || {});
+      return lvl === 'national' ? 'regional' : lvl === 'regional' ? 'branch'
+           : lvl === 'branch' ? 'depot' : null;
+    },
+    childrenFor: function (scope) {
+      const sc = scope || {}, lvl = levelOf(sc);
+      if (lvl === 'depot' || lvl === 'ass' || lvl === 'salesman') return [];
+      let kids = [];
+      if (lvl === 'national') kids = OrgResolver.childrenAt({}, 'regional');
+      else if (lvl === 'regional') kids = OrgResolver.childrenAt({ regional: sc.regional }, 'branch');
+      else if (lvl === 'branch') kids = OrgResolver.childrenAt({ regional: sc.regional, branch: sc.branch }, 'depot');
+      const self = this;
+      return kids.filter(function (c) { return self.depotsFor(c.scope).length > 0; });
+    },
+    metricOf: function (metricKey) {
+      return this.METRICS.filter(function (m) { return m.key === metricKey; })[0] || this.METRICS[0];
+    },
+    /* Catatan sumber ditulis dari authority yang BENAR-BENAR dipakai. */
+    noteFor: function () {
+      const src = this.index().source;
+      return this.NOTE + (src === 'RESULT_DAILY_SALESMAN_V1'
+        ? ' Authority: RESULT Daily Salesman V1 (Website ASS).'
+        : src === 'RESULT_DAILY_GRANULAR'
+          ? ' Authority: granular Salesman harian LIVE existing.' : '');
+    },
+    /* ======================================================================
+       V1.7.9.1 — PARTIAL ROLLOUT GUARD.
+       Gate dievaluasi PER SCOPE. Parent (Nasional/Regional/Cabang) hanya boleh
+       menampilkan aggregate bila SELURUH expected Depo Project pada scope itu
+       sudah punya contract Daily Salesman V1 yang valid. Bila user drilldown
+       langsung ke satu Depo yang sudah valid, expected scope-nya hanya Depo
+       tersebut sehingga tetap boleh tampil tanpa menunggu Depo lain.
+       ====================================================================== */
+    gate: function (scope) {
+      let cap = null;
+      try { cap = ResultCapabilities.completeness(scope || {}); } catch (e) { cap = null; }
+      const idx = this.index();
+      if (cap && !cap.hasProjectMember)
+        return { ok: false, reason: 'NO_MEMBER', cap: cap };
+      if (!idx.available) return { ok: false, reason: 'NO_SOURCE', cap: cap };
+      /* Guard hanya berlaku untuk FUTURE CONTRACT per-Depo. Jalur granular
+         existing (public.result_daily) bukan rollout bertahap per Depo. */
+      if (idx.source === 'RESULT_DAILY_SALESMAN_V1' && cap && !cap.daily.completeForScope)
+        return { ok: false, reason: 'INCOMPLETE', cap: cap };
+      return { ok: true, reason: 'OK', cap: cap };
+    },
+    gateText: function (g) {
+      const cap = g && g.cap;
+      if (g && g.reason === 'NO_MEMBER')
+        return { title: 'Coverage Project Kosong',
+                 message: (typeof SalesmanProjectScope !== 'undefined'
+                   ? 'Tidak ada Salesman Project ' + SalesmanProjectScope.label() + ' pada scope ini.'
+                   : 'Tidak ada Salesman Project pada scope ini.') };
+      if (g && g.reason === 'INCOMPLETE')
+        return { title: 'Data Project Belum Lengkap',
+                 message: 'Data harian Project tersedia untuk ' + U.int(cap.daily.availableDepots) +
+                   ' dari ' + U.int(cap.daily.expectedDepots) + ' Depo pada scope ini. ' +
+                   'Aggregate tidak ditampilkan agar tidak memakai subset data.' };
+      return { title: 'Harian Project Belum Tersedia', message: this.UNAVAILABLE };
+    },
+    /* Payload jujur ketika granular Project tidak tersedia / belum lengkap. */
+    unavailableDaily: function (scope, metricKey, gateInfo) {
+      const ctx = resultContext(), childLevel = this.childLevelOf(scope || {});
+      const g = gateInfo || { reason: 'NO_SOURCE' };
+      const t = this.gateText(g);
+      return {
+        context: ctx, level: levelOf(scope || {}), childLevel: childLevel,
+        childLabel: childLevel ? LEVEL_LABEL[childLevel] : LEVEL_LABEL.depot,
+        metric: this.metricOf(metricKey), metrics: this.METRICS.slice(),
+        dates: [], rows: [], total: { values: {}, mtd: null },
+        source: 'RESULT_DAILY_SCOPED', dateBasis: 'ORDER_DATE',
+        totalDepotNote: '', depotCount: 0, leaf: !childLevel,
+        scoped: true, unavailable: true, reason: g.reason,
+        coverage: g.cap ? g.cap.daily : null,
+        unavailableTitle: t.title, unavailableMessage: t.message
+      };
+    },
+    unavailableTrend: function (gateInfo) {
+      const g = gateInfo || { reason: 'NO_SOURCE' };
+      const t = this.gateText(g);
+      return { context: resultContext(), points: [],
+               series: [{ key: 'omset', name: 'Omset', hex: '#0e9f6e' },
+                        { key: 'avg_ec', name: 'Avg EC', hex: '#2a78d6' }],
+               source: 'RESULT_DAILY_SCOPED', dateBasis: 'ORDER_DATE', totalDepotNote: '',
+               scoped: true, unavailable: true, reason: g.reason,
+               coverage: g.cap ? g.cap.daily : null,
+               unavailableTitle: g.reason === 'INCOMPLETE' ? 'Trend Project Belum Lengkap'
+                 : g.reason === 'NO_MEMBER' ? 'Coverage Project Kosong' : 'Trend Project Belum Tersedia',
+               unavailableMessage: t.message };
+    },
+    daily: function (scope, metricKey) {
+      const ctx = resultContext(), metric = this.metricOf(metricKey);
+      const dates = this.dates(), self = this;
+      const kids = this.childrenFor(scope || {});
+      const childLevel = this.childLevelOf(scope || {});
+      const rows = kids.map(function (c) {
+        const depots = self.depotsFor(c.scope), values = {};
+        dates.forEach(function (d) { values[d] = self.valueFor(depots, d, metric.key); });
+        return { key: c.key, code: c.code, name: c.name, label: c.label, kind: c.kind,
+                 scope: c.scope, values: values,
+                 mtd: self.mtdFor(depots, metric.key, c.scope),
+                 drillable: c.kind !== 'depot' };
+      });
+      rows.sort(function (a, b) {
+        const av = a.mtd, bv = b.mtd;
+        if (av === null && bv === null) return a.label < b.label ? -1 : 1;
+        if (av === null) return 1;
+        if (bv === null) return -1;
+        return av - bv || (a.label < b.label ? -1 : 1);
+      });
+      const allDepots = this.depotsFor(scope || {}), totalValues = {};
+      dates.forEach(function (d) { totalValues[d] = self.valueFor(allDepots, d, metric.key); });
+      return {
+        context: ctx, level: levelOf(scope || {}), childLevel: childLevel,
+        childLabel: childLevel ? LEVEL_LABEL[childLevel] : LEVEL_LABEL.depot,
+        metric: metric, metrics: this.METRICS.slice(), dates: dates, rows: rows,
+        total: { values: totalValues, mtd: this.mtdFor(allDepots, metric.key, scope || {}) },
+        source: 'RESULT_DAILY_SCOPED', dateBasis: 'ORDER_DATE',
+        totalDepotNote: this.noteFor(), depotCount: allDepots.length,
+        leaf: !childLevel, scoped: true, unavailable: false,
+        authority: this.index().source,
+        projectLabel: SalesmanProjectScope.label()
+      };
+    },
+    /* TREND memakai dataset & formula yang SAMA PERSIS dengan daily() di atas. */
+    trend: function (scope) {
+      const depots = this.depotsFor(scope || {}), self = this;
+      const points = this.dates().map(function (d) {
+        const omset = self.valueFor(depots, d, 'omset');
+        const avgEc = self.valueFor(depots, d, 'avg_ec');
+        return { date: d, omset: omset, avg_ec: avgEc, hasData: omset !== null || avgEc !== null };
+      }).filter(function (pt) { return pt.hasData; });
+      return { context: resultContext(), points: points,
+               series: [{ key: 'omset', name: 'Omset', hex: '#0e9f6e' },
+                        { key: 'avg_ec', name: 'Avg EC', hex: '#2a78d6' }],
+               source: 'RESULT_DAILY_SCOPED', dateBasis: 'ORDER_DATE',
+               totalDepotNote: this.noteFor(), scoped: true, unavailable: false,
+               authority: this.index().source,
+               projectLabel: SalesmanProjectScope.label() };
+    }
+  };
+
   function getResultDaily(scope, metricKey) {
+    /* V1.7.8 — Coverage Project aktif => WAJIB memakai granular scoped, atau
+       jujur unavailable. Tidak pernah jatuh diam-diam ke Total Depo. */
+    if (ResultDailyScoped.engaged()) {
+      const g = ResultDailyScoped.gate(scope || {});
+      return g.ok ? ResultDailyScoped.daily(scope || {}, metricKey)
+                  : ResultDailyScoped.unavailableDaily(scope || {}, metricKey, g);
+    }
     /* V1.7.7 — LIVE + extension V2 tersedia => authority Daily V2 (total Depo). */
     if (ResultDailyV2.active()) return ResultDailyV2.daily(scope || {}, metricKey);
     return getResultDailyLegacy(scope, metricKey);
@@ -5266,6 +6543,12 @@ const DashboardService = (function (DP) {
              rows: rows, total: { values: totalValues, mtd: totalMetrics[metric.key], metrics: totalMetrics } };
   }
   function getResultTrend(scope) {
+    /* V1.7.8 — Trend memakai dataset scoped yang SAMA dengan Monitoring Harian
+       ketika Coverage Project aktif, sehingga titik tanggal X selalu identik. */
+    if (ResultDailyScoped.engaged()) {
+      const g = ResultDailyScoped.gate(scope || {});
+      return g.ok ? ResultDailyScoped.trend(scope || {}) : ResultDailyScoped.unavailableTrend(g);
+    }
     /* V1.7.7 — sumber, scope, date set, dan formula sama persis dengan
        Monitoring Harian (satu service, tanpa duplikasi logika). */
     if (ResultDailyV2.active()) return ResultDailyV2.trend(scope || {});
@@ -5284,8 +6567,203 @@ const DashboardService = (function (DP) {
              series: [{ key: 'omset', name: 'Omset', hex: '#0e9f6e' },
                       { key: 'avg_ec', name: 'Avg EC', hex: '#2a78d6' }] };
   }
+  /* ==========================================================================
+     V1.7.9 — RESULT BASELINE SALESMAN SERVICE (COVERAGE PROJECT).
+
+     Website ASS adalah authority comparison basis (equal-HK / slot M-1 / dsb).
+     Pusat HANYA:
+       (1) memfilter rows dengan membership Project yang sama (Set O(1)),
+       (2) menjumlahkan Current dan Baseline per Depo lalu per scope,
+       (3) memakai formula Growth existing (resultGrowth).
+     Pusat TIDAK PERNAH menyusun baseline sendiri, tidak pernah memproporsikan
+     baseline Depo, dan tidak pernah memakai result_baseline_depot untuk
+     Project. Bila kontrak tidak tersedia / tidak comparable -> unavailable.
+     Grain comparison berhenti di DEPO (sama dengan baseline Depo existing):
+     baris ASS/Salesman ditampilkan "–".
+     ========================================================================== */
+  const ResultBaselineSalesman = {
+    _key: '', _idx: null,
+    cacheKey: function () {
+      let rev = 0;
+      try { rev = typeof DP.rev === 'function' ? DP.rev() : 0; } catch (e) { rev = 0; }
+      const pk = (typeof SalesmanProjectScope !== 'undefined' && !SalesmanProjectScope.isAll())
+        ? SalesmanProjectScope.projectKey(SalesmanProjectScope.selected()) : '';
+      return String(rev) + '|' + String(SalesmanProjectScope.rev) + '|' + pk;
+    },
+    active: function () {
+      let cap = null;
+      try { cap = ResultCapabilities.snapshot(); } catch (e) { cap = null; }
+      return !!(cap && cap.baselineSalesmanAvailable);
+    },
+    index: function () {
+      const key = this.cacheKey();
+      if (this._idx && this._key === key) return this._idx;
+      const empty = { available: false, byDepot: {}, depots: [], header: null, salesmen: 0 };
+      if (!this.active() || typeof DP.getResultBaselineSalesman !== 'function') {
+        this._key = key; this._idx = empty; return empty;
+      }
+      let store = null;
+      try { store = DP.getResultBaselineSalesman(); } catch (e) { store = null; }
+      if (!store || !store.available || !store.rows || !store.rows.length) {
+        this._key = key; this._idx = empty; return empty;
+      }
+      const allowed = SalesmanProjectScope.activeSet();
+      const byDepot = {}; let salesmen = 0;
+      for (let i = 0; i < store.rows.length; i++) {
+        const r = store.rows[i];
+        if (allowed && !allowed.has(r.salesman_code)) continue;
+        if (!MasterCabangAuthority.allowed(r.depot_code, 'monitoring')) continue;
+        let bag = byDepot[r.depot_code];
+        if (!bag) bag = byDepot[r.depot_code] = {
+          current: { omset: 0, roa: 0, ec: 0 }, baseline: { omset: 0, roa: 0, ec: 0 }, salesmen: 0 };
+        bag.current.omset += r.current.omset; bag.current.roa += r.current.roa; bag.current.ec += r.current.ec;
+        bag.baseline.omset += r.baseline.omset; bag.baseline.roa += r.baseline.roa; bag.baseline.ec += r.baseline.ec;
+        bag.salesmen++; salesmen++;
+      }
+      const depots = Object.keys(byDepot);
+      const out = { available: depots.length > 0, byDepot: byDepot, depots: depots,
+                    header: store.header || null, salesmen: salesmen };
+      this._key = key; this._idx = out;
+      return out;
+    },
+    /* Agregasi untuk satu scope. ASS/Salesman tidak didukung grain-nya. */
+    aggregate: function (scope) {
+      const sc = scope || {};
+      const idx = this.index();
+      if (!idx.available || sc.ass || sc.salesman)
+        return { available: false, current: null, baseline: null, depots: 0, salesmen: 0,
+                 grainSupported: !sc.ass && !sc.salesman, header: idx.header };
+      const set = depotSetInScope(sc);
+      const current = { omset: 0, roa: 0, ec: 0 }, baseline = { omset: 0, roa: 0, ec: 0 };
+      let n = 0, sm = 0;
+      for (let i = 0; i < idx.depots.length; i++) {
+        const code = idx.depots[i];
+        if (!set[code]) continue;
+        const bag = idx.byDepot[code];
+        current.omset += bag.current.omset; current.roa += bag.current.roa; current.ec += bag.current.ec;
+        baseline.omset += bag.baseline.omset; baseline.roa += bag.baseline.roa; baseline.ec += bag.baseline.ec;
+        n++; sm += bag.salesmen;
+      }
+      return { available: n > 0, current: n ? current : null, baseline: n ? baseline : null,
+               depots: n, salesmen: sm, grainSupported: true, header: idx.header };
+    },
+    headerText: function (fallbackCurrent) {
+      const h = this.index().header;
+      if (!h) return null;
+      const cur = h.current_period_month ? ResultBaseline.labelMonth(h.current_period_month) : fallbackCurrent;
+      const curHk = h.current_hk === null ? '' : ' HK' + U.int(h.current_hk);
+      const base = h.baseline_period_month ? ResultBaseline.labelMonth(h.baseline_period_month) : '–';
+      const baseHk = h.baseline_hk === null ? '' : ' HK' + U.int(h.baseline_hk);
+      return {
+        title: cur + curHk + ' vs ' + base + baseHk + ' Baseline',
+        baselineLabel: (h.baseline_period_month ? ResultBaseline.labelMonth(h.baseline_period_month, true) : 'Baseline') + ' Baseline',
+        basis: h.comparison_basis || '',
+        distribution: '', coverage: ''
+      };
+    }
+  };
+
   function getResultDetail(scope) {
     const ctx = resultContext(), curRows = resultRows(scope || {}, ctx, 'current'), prevRows = resultRows(scope || {}, ctx, 'previous');
+    /* ======================================================================
+       V1.7.8 — DETAIL MTD SCOPE-SAFE TERHADAP COVERAGE PROJECT.
+
+       Current  : resultRows() -> mtdRecordsFor() -> DP.getResultMtdRecords(),
+                  yang SUDAH melewati SalesmanProjectScope. Jadi Current memang
+                  benar-benar hanya salesman Project aktif.
+       Baseline : result_baseline_depot bergrain DEPO (Current+Baseline pair
+                  authoritative per Depo dari Website ASS) dan periode
+                  pembanding RESULT tidak dimuat pada kontrak LIVE existing
+                  (mtdRecordsFor 'previous' = []). Tidak ada baseline
+                  salesman-level authoritative. Membagi baseline Depo secara
+                  proporsional DILARANG. Karena itu, saat Coverage Project
+                  aktif, Baseline dan Growth ditampilkan "—" (unavailable),
+                  BUKAN angka Total Depo dan BUKAN 0 palsu.
+       Coverage = Semua Salesman: behaviour existing dipertahankan 100%.
+       ====================================================================== */
+    if (isLiveMode() && typeof SalesmanProjectScope !== 'undefined' && !SalesmanProjectScope.isAll()) {
+      const projectLabel = SalesmanProjectScope.label();
+      /* ====================================================================
+         V1.7.9 — bila FUTURE CONTRACT result_baseline_salesman V1 tersedia,
+         Baseline + Growth Project AKTIF OTOMATIS (tanpa feature flag).
+         Pasangan Current/Baseline diambil apa adanya dari Website ASS agar
+         comparison tetap apple-to-apple sesuai comparison_basis.
+         ==================================================================== */
+      /* ====================================================================
+         V1.7.9.1 — PARTIAL ROLLOUT GUARD BASELINE.
+         Baseline Project hanya dipakai bila SELURUH expected Depo Project pada
+         scope aktif sudah mempunyai contract Baseline Salesman V1 yang valid,
+         DAN seluruh member Project pada Depo tersebut ada di dalamnya. Bila
+         belum: Current tetap tampil (authority result_mtd salesman-level),
+         Baseline & Growth "—", TANPA menjumlahkan subset dan TANPA memakai
+         result_baseline_depot Total Depo.
+         ==================================================================== */
+      let bcov = null;
+      try { bcov = ResultCapabilities.completeness(scope || {}); } catch (e) { bcov = null; }
+      const baselineComplete = !!(bcov && bcov.baseline && bcov.baseline.completeForScope);
+      if (ResultBaselineSalesman.active() && baselineComplete) {
+        curRows.forEach(function (r) {
+          const a = ResultBaselineSalesman.aggregate(r.scope);
+          if (a.available) {
+            r.metrics = Object.assign({}, r.metrics, a.current, { hasData: true });
+            r.previous = Object.assign({ hasData: true }, a.baseline);
+            r.baselineMeta = a;
+          } else {
+            r.previous = aggregateResult([]); r.baselineMeta = a;
+          }
+          r.growth = { omset: resultGrowth(r.metrics.omset, r.previous.omset),
+                       roa: resultGrowth(r.metrics.roa, r.previous.roa),
+                       ec: resultGrowth(r.metrics.ec, r.previous.ec) };
+        });
+        curRows.sort(function (a, b) {
+          const av = a.growth.omset, bv = b.growth.omset;
+          if (av === null || bv === null) return av === null ? 1 : -1;
+          return av - bv;
+        });
+        const agg = ResultBaselineSalesman.aggregate(scope || {});
+        const head = ResultBaselineSalesman.headerText(ctx.currentLabel) || {
+          title: ctx.currentLabel + ' · Baseline Project', baselineLabel: 'Baseline', basis: '',
+          distribution: '', coverage: '' };
+        return {
+          context: ctx, level: levelOf(scope || {}), childLevel: CHILD_OF[levelOf(scope || {})],
+          childLabel: LEVEL_LABEL[CHILD_OF[levelOf(scope || {})]], rows: curRows,
+          baseline: agg, projectScoped: true, projectLabel: projectLabel,
+          projectBaselineAvailable: true,
+          header: { title: head.title + ' · Coverage ' + projectLabel,
+                    baselineLabel: head.baselineLabel, distribution: '',
+                    coverage: (agg.available ? U.int(agg.depots) + ' Depo · ' + U.int(agg.salesmen) + ' Salesman Project' : ''),
+                    basis: head.basis }
+        };
+      }
+      curRows.forEach(function (r) {
+        r.previous = aggregateResult([]);          /* seluruh field null, bukan 0 */
+        r.baselineMeta = { available: false, grainSupported: false, projectScoped: true };
+        r.growth = { omset: null, roa: null, ec: null };
+      });
+      curRows.sort(function (a, b) {
+        if (a.hasData !== b.hasData) return a.hasData ? -1 : 1;
+        const av = a.metrics.omset, bv = b.metrics.omset;
+        if (av === null || bv === null) return av === null ? 1 : -1;
+        return bv - av;
+      });
+      const curHk = ctx.hk === null || ctx.hk === undefined ? '–' : ctx.hk;
+      /* Bedakan "belum tersedia sama sekali" dari "tersedia tetapi belum lengkap". */
+      const partial = !!(bcov && bcov.baseline && bcov.baseline.availableDepots > 0 && !baselineComplete);
+      const covText = partial
+        ? U.int(bcov.baseline.availableDepots) + '/' + U.int(bcov.baseline.expectedDepots) + ' Depo'
+        : '';
+      return {
+        context: ctx, level: levelOf(scope || {}), childLevel: CHILD_OF[levelOf(scope || {})],
+        childLabel: LEVEL_LABEL[CHILD_OF[levelOf(scope || {})]], rows: curRows,
+        baseline: { available: false, projectScoped: true },
+        projectScoped: true, projectLabel: projectLabel,
+        projectBaselinePartial: partial,
+        projectBaselineCoverage: bcov ? bcov.baseline : null,
+        header: { title: ctx.currentLabel + ' HK' + curHk + ' · Coverage ' + projectLabel +
+                    ' · ' + (partial ? 'Baseline Project belum lengkap' : 'Baseline Project belum tersedia'),
+                  baselineLabel: 'Baseline', distribution: '', coverage: covText }
+      };
+    }
     if (isLiveMode()) {
       curRows.forEach(function (r) {
         const a = ResultBaseline.aggregate(r.scope);
@@ -6109,6 +7587,664 @@ const InformationService = (function (Provider) {
   return { getSnapshot: getSnapshot,
     getSnapshotForTat: function (scope) { return getSnapshot(scope || {}, { bypassInformationStatus: true, domain: 'ranking' }); } };
 })(ProviderHub.infoFacade);
+
+/* ============================================================================
+   LAYER 5B — PUBLISH HISTORY SERVICE (V1.7.8 · identity fix V1.7.8.1)
+   ----------------------------------------------------------------------------
+   TUJUAN BISNIS: apakah ASS/Depo disiplin melakukan publish SETIAP HARI, dan
+   pada hari publish tersebut report yang dikirim sudah berada di HK berapa
+   (P = HK Proses, H = HK Hasil).
+
+   ==== DUA IDENTITY YANG TIDAK BOLEH DICAMPUR (V1.7.8.1) ====================
+
+   A. BATCH IDENTITY  — dipakai untuk DEDUPE record batch yang muncul di
+      beberapa cache (bootstrap allActiveBatches, process loader, result loader).
+        PRIMARY  : batch_id.
+        FALLBACK : composite defensif bila batch_id benar-benar tidak ada:
+                   publish_event_id + depot_code + domain + period_month + hk
+                   + revision_number + timestamp publish.
+      publish_event_id TIDAK PERNAH dipakai sendirian sebagai batch key.
+      Alasannya: SATU publish action sah membawa BEBERAPA batch — misalnya
+      satu klik Publish menghasilkan batch PROCESS dan batch RESULT dengan
+      publish_event_id yang sama. Bila publish_event_id dipakai sebagai batch
+      key, salah satu batch akan hilang dan cell dapat salah menjadi
+      "P18 H—" atau "P— H18" padahal seharusnya "P18 H18".
+
+   B. PUBLISH ACTION / EVENT IDENTITY — dipakai untuk GROUPING dan COUNT
+      berapa kali publish/revisi terjadi pada satu tanggal.
+        PRIMARY  : publish_event_id (batch dengan event id sama = SATU aksi).
+        FALLBACK : timestamp publish exact, bila publish_event_id tidak
+                   tersedia. Dua timestamp publish berbeda pada domain yang
+                   sama = dua aksi yang benar-benar dapat dibuktikan.
+      Event berbeda TIDAK PERNAH disatukan hanya karena HK-nya sama.
+      Badge 2x/3x = jumlah DISTINCT PUBLISH ACTION terbanyak antar domain,
+      bukan jumlah batch mentah. PROCESS 1x + RESULT 1x dalam satu action
+      adalah kondisi normal dan TIDAK diberi badge.
+
+   ==== SAFETY ==============================================================
+     - TANGGAL KOLOM = TANGGAL PUBLISH dari timestamp publish sebenarnya
+       (created_at / uploaded_at / published_at), dikonversi ke WIB.
+       data_date_to TIDAK PERNAH dipakai sebagai tanggal publish.
+     - depot_update_latest TIDAK dipakai: snapshot terakhir tidak dapat
+       membuktikan riwayat. Tidak ada history sintetis.
+     - revision_number TIDAK PERNAH dipakai untuk menyimpulkan jumlah publish
+       hari ini. revision_number = 2 hanya membuktikan ada revisi sebelumnya,
+       TIDAK membuktikan revisi itu terjadi pada tanggal yang sama. Field ini
+       hanya dipakai sebagai tie-break deterministik ketika dua batch
+       kebetulan memiliki timestamp identik, dan sebagai diagnostic
+       kelengkapan history.
+     - Latest P/H per tanggal = TIMESTAMP publish terbaru per domain,
+       bukan HK terbesar dan bukan revision_number terbesar.
+     - Bila tidak ada satu pun event dengan timestamp publish, service
+       melaporkan unavailable dan UI menampilkan pesan jujur.
+
+   ==== KNOWN LIMITATION ====================================================
+     Read Gateway existing mengirim ACTIVE batch/revision (lihat nama
+     LiveDataStore.allActiveBatches). Revisi lama dapat tetap ada di database
+     namun TIDAK dikirim ke frontend. Karena itu frontend tidak selalu dapat
+     membuktikan seluruh riwayat revisi. Diagnostic capability() melaporkan
+     kondisi ini dan UI menambahkan catatan kecil netral. Badge multiple
+     publish hanya muncul bila lebih dari satu publish action pada tanggal
+     yang sama BENAR-BENAR observable. Lebih baik tanpa badge daripada badge
+     yang salah. Tidak ada perubahan backend pada build ini.
+
+   SCOPE: mengikuti Monitoring Scope + Regional/Cabang/Depo + status Informasi
+   Master Cabang (identik dengan section Update per Depo). TIDAK mengikuti
+   Coverage Salesman / Project — ini disiplin publish Depo, bukan performa
+   salesman.
+
+   PERFORMA: collect + dedupe batch SEKALI, index depot -> date -> domain dan
+   ringkasan cell dihitung SEKALI per (rev x scope) lalu di-cache; renderer
+   hanya melakukan lookup O(1). Perubahan Coverage Project tidak memicu
+   rebuild karena tidak masuk cache key.
+   ========================================================================= */
+const PublishHistoryService = (function () {
+  function iso(y, m, d) { return String(y) + '-' + U.pad(m) + '-' + U.pad(d); }
+  /* Day-of-week timezone-safe: kalender murni, tanpa parsing lokal/UTC campur. */
+  function dowOf(dateIso) {
+    const y = Number(dateIso.slice(0, 4)), m = Number(dateIso.slice(5, 7)), d = Number(dateIso.slice(8, 10));
+    return new Date(Date.UTC(y, m - 1, d)).getUTCDay();
+  }
+  function daysInMonth(y, m) { return new Date(Date.UTC(y, m, 0)).getUTCDate(); }
+  function wibDateKey(ts) {
+    const p = U.wibParts(ts);
+    return p ? iso(p.y, p.m, p.d) : null;
+  }
+  function todayWib() {
+    const p = U.wibParts(new Date());
+    return p ? { y: p.y, m: p.m, d: p.d, iso: iso(p.y, p.m, p.d) } : null;
+  }
+
+  function idOf(v) {
+    return (v === null || v === undefined) ? '' : String(v).trim();
+  }
+  /* --------------------------------------------------------------------------
+     BATCH IDENTITY (lihat blok A pada header service).
+     PRIMARY  : batch_id.
+     FALLBACK : composite defensif — publish_event_id + depot + domain +
+                period_month + hk + revision_number + timestamp.
+     publish_event_id TIDAK PERNAH menjadi key tunggal.
+     -------------------------------------------------------------------------- */
+  function batchKeyOf(b, depot, domain, ts) {
+    const bid = idOf(b.batch_id);
+    if (bid) return 'B:' + bid;
+    return 'C:' + [idOf(b.publish_event_id), depot, domain, idOf(b.period_month),
+                   (b.hk === null || b.hk === undefined ? '' : String(b.hk)),
+                   (b.revision_number === null || b.revision_number === undefined ? '' : String(b.revision_number)),
+                   String(ts)].join('');
+  }
+  /* --------------------------------------------------------------------------
+     PUBLISH ACTION IDENTITY (lihat blok B pada header service).
+     PRIMARY  : publish_event_id — batch PROCESS + RESULT dari satu klik
+                Publish memiliki event id yang sama dan dihitung SATU aksi.
+     FALLBACK : timestamp publish exact. Dua timestamp berbeda = dua aksi yang
+                benar-benar observable. HK TIDAK PERNAH dipakai untuk
+                menyatukan atau memisahkan aksi.
+     -------------------------------------------------------------------------- */
+  function actionKeyOf(rec) {
+    return rec.eventId ? 'E:' + rec.eventId : 'T:' + String(rec.ms);
+  }
+
+  /* satu record batch ternormalisasi dari sumber apa pun */
+  function toRecord(b, domainHint, sourceTag) {
+    const depot = (typeof LiveNormalize !== 'undefined')
+      ? LiveNormalize.code(b.depot_code) : String(b.depot_code || '').trim();
+    if (!depot) return null;
+    const domain = String(b.domain || domainHint || '').toUpperCase();
+    if (domain !== 'PROCESS' && domain !== 'RESULT') return null;
+    /* Timestamp publish sebenarnya. Tanpa ini batch tidak dapat ditempatkan
+       pada tanggal publish mana pun dan sengaja TIDAK ditebak.
+       hk / data_date_to / cutoff_date TIDAK PERNAH dipakai sebagai tanggal. */
+    const ts = b.created_at || b.uploaded_at || b.published_at || null;
+    if (!ts) return null;
+    /* V1.7.9.2 — baris contract V1 sudah dinormalisasi SEKALI saat hydration
+       (ts_ms + publish_date_wib), jadi renderer tidak pernah mem-parse ulang
+       timestamp per cell. Batch observable tetap diparse di sini, sekali. */
+    let ms = (typeof b.ts_ms === 'number' && isFinite(b.ts_ms)) ? b.ts_ms : null;
+    let date = /^\d{4}-\d{2}-\d{2}$/.test(String(b.publish_date_wib || '')) ? b.publish_date_wib : null;
+    let timeLabel = b.publish_time_wib || null;
+    if (ms === null || !date) {
+      const dt = U.toDate(ts);
+      if (!dt || !isFinite(dt.getTime())) return null;
+      ms = dt.getTime();
+      date = wibDateKey(ts);              /* konversi ke Asia/Jakarta */
+      if (!date) return null;
+      timeLabel = null;
+    }
+    const hkRaw = b.hk, revRaw = b.revision_number;
+    return {
+      batchKey: batchKeyOf(b, depot, domain, ts),
+      batchId: idOf(b.batch_id),
+      eventId: idOf(b.publish_event_id),
+      depot_code: depot, domain: domain, date: date, ms: ms,
+      hk: (hkRaw === null || hkRaw === undefined || hkRaw === '') ? null : (isFinite(Number(hkRaw)) ? Number(hkRaw) : null),
+      time: timeLabel || U.wibTime(ts),
+      period_month: b.period_month ? String(b.period_month).slice(0, 10) : null,
+      uploader: b.uploaded_by_name || null,
+      /* diagnostic + tie-break saja; TIDAK PERNAH menjadi jumlah publish */
+      revision: (revRaw === null || revRaw === undefined || revRaw === '') ? null
+                : (isFinite(Number(revRaw)) ? Number(revRaw) : null),
+      sourceTag: sourceTag
+    };
+  }
+
+  /* V1.7.9.1 — contract dengan rows: [] TETAP dipakai bila complete === true
+     (authoritative empty history), bukan dianggap tidak ada. */
+  function contractStore() {
+    try {
+      const f = ProviderHub.facade;
+      if (typeof f.getPublishHistory !== 'function') return null;
+      const h = f.getPublishHistory();
+      if (!h || !h.available || !h.rows) return null;
+      /* V1.7.9.2 — PERIOD CHANGE SAFETY. History periode lain TIDAK boleh
+         dipakai untuk periode aktif, baik sebagai COMPLETE maupun sebagai
+         tambahan PARTIAL. Bulan tidak pernah bocor antar periode. */
+      const act = activePeriodMonth();
+      if (act && String(h.periodMonth || '').slice(0, 7) !== act) return null;
+      return (h.rows.length || h.complete === true) ? h : null;
+    } catch (e) { return null; }
+  }
+  /* Period aktif RESULT — dipakai untuk memastikan contract history memang
+     membicarakan periode yang sedang dimonitor. */
+  function activePeriodMonth() {
+    try {
+      const f = ProviderHub.facade;
+      const p = (typeof f.resultPeriodMonth === 'function') ? f.resultPeriodMonth() : null;
+      const t = String(p || '').slice(0, 10);
+      return /^\d{4}-\d{2}-\d{2}$/.test(t) ? t.slice(0, 7) : null;
+    } catch (e) { return null; }
+  }
+
+  /* ==========================================================================
+     V1.7.9.3 — SOURCE PRECEDENCE.
+
+     Dua sumber dikumpulkan TERPISAH dan tidak pernah dicampur begitu saja:
+
+       collectContractEvents()   : HANYA LiveDataStore.publishHistory.rows
+                                   (sudah lolos integrity validation V1.7.9.2).
+       collectObservableEvents() : HANYA allActiveBatches + process.batches +
+                                   result.batches.
+
+     evaluateCapability() menentukan EFFECTIVE MODE, lalu eventsForMatrix()
+     memilih sumber tunggal:
+
+       COMPLETE -> contract events SAJA. Observable batch TIDAK PERNAH
+                   ditambahkan ke matrix authoritative, karena authority sudah
+                   menyatakan riwayat lengkap (termasuk rows: [] yang berarti
+                   "memang tidak ada publish").
+       PARTIAL  -> contract rows (bila ada, non-complete atau hasil downgrade)
+                   digabung observable, dedupe by batch identity. Seluruh
+                   isinya diperlakukan observational: tanggal tanpa event
+                   TIDAK PERNAH merah.
+       NONE     -> kosong.
+
+     Observable tetap berguna sebagai INTEGRITY CROSS-CHECK, bukan sebagai
+     tambahan event. Pipeline dipanggil sekali per (rev x period x provider)
+     dan hasilnya di-cache; renderer hanya lookup O(1). Tidak ada rekursi:
+     collector bersifat primitif dan tidak pernah memanggil evaluator.
+     ========================================================================== */
+  let _contractCache = null, _contractKey = '';
+  let _obsCache = null, _obsKey = '';
+  let _capCache = null, _capKey = '';
+
+  function sourceKey() {
+    let rev = 0;
+    try { rev = (typeof LiveDataStore !== 'undefined') ? LiveDataStore.rev : 0; } catch (e) { rev = 0; }
+    let pm = '';
+    try { pm = ProviderHub.mode(); } catch (e) { pm = ''; }
+    return String(rev) + '|' + (activePeriodMonth() || '') + '|' + pm;
+  }
+
+  /* ---- A1: CONTRACT EVENTS (authoritative) ---- */
+  function collectContractEvents() {
+    const key = sourceKey();
+    if (_contractCache && _contractKey === key) return _contractCache;
+    const contract = contractStore();
+    const out = [], seen = {};
+    if (contract) {
+      const rows = contract.rows || [];
+      for (let i = 0; i < rows.length; i++) {
+        const rec = toRecord(rows[i], '', 'CONTRACT_V1');
+        if (!rec) continue;
+        if (seen[rec.batchKey]) continue;
+        seen[rec.batchKey] = 1;
+        out.push(rec);
+      }
+    }
+    _contractCache = out; _contractKey = key;
+    return out;
+  }
+
+  /* ---- A2: OBSERVABLE EVENTS (current/active batches saja) ---- */
+  function collectObservableEvents() {
+    const key = sourceKey();
+    if (_obsCache && _obsKey === key) return _obsCache;
+    const S = (typeof LiveDataStore !== 'undefined') ? LiveDataStore : null;
+    const out = [], seen = {};
+    if (S) {
+      const pools = [
+        { list: S.allActiveBatches, hint: '' },
+        { list: S.process && S.process.batches, hint: 'PROCESS' },
+        { list: S.result && S.result.batches, hint: 'RESULT' }
+      ];
+      pools.forEach(function (pool) {
+        const list = pool.list || [];
+        for (let i = 0; i < list.length; i++) {
+          const b = list[i];
+          if (!b) continue;
+          const rec = toRecord(b, pool.hint, 'OBSERVABLE');
+          if (!rec) continue;
+          if (seen[rec.batchKey]) continue;   /* batch SAMA dari cache lain: sekali saja */
+          seen[rec.batchKey] = 1;
+          out.push(rec);
+        }
+      });
+    }
+    _obsCache = out; _obsKey = key;
+    return out;
+  }
+
+  /* Periode sebuah event untuk keperluan cross-check: period_month batch bila
+     ada, jika tidak memakai bulan tanggal publish WIB. */
+  function periodOf(rec) {
+    const pm = String(rec.period_month || '').slice(0, 7);
+    return /^\d{4}-\d{2}$/.test(pm) ? pm : String(rec.date || '').slice(0, 7);
+  }
+  /* Identitas authority sebuah batch untuk perbandingan contract vs observable.
+     Timestamp dibandingkan sebagai INSTANT (ms), bukan string mentah, sehingga
+     "…T10:00:00+07:00" dan "…T03:00:00Z" dianggap sama. */
+  function identitySig(rec) {
+    return [rec.eventId, rec.domain, rec.depot_code, periodOf(rec),
+            rec.hk === null ? '' : String(rec.hk), String(rec.ms)].join('|');
+  }
+
+  /* ---- C: CROSS-CHECK contract COMPLETE vs observable same-period ---- */
+  function crossCheck(contractEvents, observableEvents, contractPeriod) {
+    const byBatch = {}, byIdent = {};
+    for (let i = 0; i < contractEvents.length; i++) {
+      const e = contractEvents[i];
+      if (e.batchId) byBatch[e.batchId] = identitySig(e);
+      byIdent[identitySig(e)] = 1;
+    }
+    let extra = 0, conflict = 0;
+    const reasons = [];
+    for (let i = 0; i < observableEvents.length; i++) {
+      const o = observableEvents[i];
+      /* Hanya batch pada PERIODE yang sama dengan contract yang relevan.
+         Batch Juli tidak pernah membatalkan history Agustus. */
+      if (contractPeriod && periodOf(o) !== contractPeriod) continue;
+      const sig = identitySig(o);
+      if (o.batchId && byBatch[o.batchId] !== undefined) {
+        if (byBatch[o.batchId] !== sig) {
+          conflict++;
+          if (reasons.length < 5)
+            reasons.push('batch_id ' + o.batchId + ' berbeda antara authoritative history dan batch observable.');
+        }
+        continue;                       /* batch dikenal contract -> bukan extra */
+      }
+      if (byIdent[sig]) continue;       /* identik walau batch_id tidak tersedia */
+      extra++;
+      if (reasons.length < 5)
+        reasons.push('Observable batch ' + (o.batchId || (o.depot_code + '/' + o.domain)) +
+                     ' pada ' + o.date + ' tidak tercakup dalam authoritative publish history.');
+    }
+    return { ok: extra === 0 && conflict === 0, extra: extra, conflict: conflict, reasons: reasons };
+  }
+
+  /* ---- B: EFFECTIVE CAPABILITY ---- */
+  function evaluateCapability() {
+    const key = sourceKey();
+    if (_capCache && _capKey === key) return _capCache;
+    const contract = contractStore();
+    const contractEvents = collectContractEvents();
+    const observableEvents = collectObservableEvents();
+    let out;
+    /* COMPLETE hanya dari contract V1 yang lolos SELURUH syarat: complete
+       === true, timezone EKSPLISIT Asia/Jakarta, period = periode RESULT aktif
+       (dijaga contractStore), seluruh row valid (dijaga parser), DAN tidak
+       berkontradiksi dengan observable same-period. */
+    if (contract && contract.version === 1 && contract.complete === true &&
+        contract.timezone === 'Asia/Jakarta') {
+      const period = String(contract.periodMonth || '').slice(0, 7);
+      const cc = crossCheck(contractEvents, observableEvents, period);
+      if (cc.ok) {
+        out = { mode: 'COMPLETE', source: 'PUBLISH_HISTORY_V1',
+                periodMonth: contract.periodMonth, declaredComplete: true,
+                authoritativeEmpty: contractEvents.length === 0,
+                contradiction: null };
+      } else {
+        /* Klaim complete dibatalkan: observable membuktikan history tidak
+           lengkap / tidak konsisten. Turun ke PARTIAL, TIDAK digabung sambil
+           tetap mengaku COMPLETE. */
+        out = { mode: 'PARTIAL', source: 'PUBLISH_HISTORY_V1_CONTRADICTED',
+                periodMonth: contract.periodMonth, declaredComplete: true,
+                authoritativeEmpty: false,
+                contradiction: { extra: cc.extra, conflict: cc.conflict, reasons: cc.reasons } };
+        if (typeof LiveDataStore !== 'undefined') {
+          cc.reasons.forEach(function (r) {
+            const t = 'PUBLISH HISTORY \u00b7 CROSS-CHECK \u00b7 ' + r +
+              ' Capability diturunkan menjadi PARTIAL.';
+            if (LiveDataStore.notes.indexOf(t) < 0) LiveDataStore.notes.push(t);
+          });
+        }
+      }
+    } else {
+      const has = contractEvents.length > 0 || observableEvents.length > 0;
+      out = {
+        mode: has ? 'PARTIAL' : 'NONE',
+        source: has ? (contract ? 'PUBLISH_HISTORY_V1_PARTIAL' : 'OBSERVABLE_BATCHES') : 'NONE',
+        periodMonth: contract ? contract.periodMonth : null,
+        declaredComplete: !!(contract && contract.declaredComplete),
+        authoritativeEmpty: false, contradiction: null
+      };
+    }
+    _capCache = out; _capKey = key;
+    return out;
+  }
+  function mode() { return evaluateCapability(); }
+
+  /* ---- E: SUMBER EVENT MATRIX FINAL (satu resolver) ---- */
+  function eventsForMatrix() {
+    const cap = evaluateCapability();
+    if (cap.mode === 'NONE') return [];
+    const contractEvents = collectContractEvents();
+    if (cap.mode === 'COMPLETE') return contractEvents;   /* authoritative ONLY */
+    /* PARTIAL: bukti observasional digabung, dedupe by batch identity. */
+    const out = [], seen = {};
+    contractEvents.forEach(function (e) { if (!seen[e.batchKey]) { seen[e.batchKey] = 1; out.push(e); } });
+    collectObservableEvents().forEach(function (e) {
+      if (seen[e.batchKey]) return;
+      seen[e.batchKey] = 1; out.push(e);
+    });
+    return out;
+  }
+
+  /* Diagnostic tambahan (bukan penentu COMPLETE). */
+  function capabilityOf(list, modeInfo) {
+    const byIdentity = {}, actions = {};
+    let revisionClaimed = false, superseded = false;
+    for (let i = 0; i < list.length; i++) {
+      const e = list[i];
+      if (e.revision !== null && e.revision > 1) revisionClaimed = true;
+      actions[actionKeyOf(e)] = 1;
+      const k = [e.depot_code, e.domain, e.period_month || '', e.hk === null ? '' : e.hk].join('\u0001');
+      const prev = byIdentity[k];
+      if (prev === undefined) byIdentity[k] = (e.revision === null ? '' : e.revision);
+      else if (String(prev) !== String(e.revision === null ? '' : e.revision)) superseded = true;
+    }
+    const m = modeInfo || evaluateCapability();
+    return {
+      mode: m.mode, source: m.source,
+      historyAvailable: list.length > 0,
+      observableBatchCount: list.length,
+      observableEventCount: Object.keys(actions).length,
+      revisionClaimed: revisionClaimed,
+      supersededObservable: superseded,
+      contradiction: m.contradiction || null,
+      /* Kelengkapan revisi: dijamin hanya oleh contract COMPLETE. */
+      revisionHistoryComplete: m.mode === 'COMPLETE'
+    };
+  }
+
+  let _cache = null, _cacheKey = '';
+  function cacheKeyOf(scope) {
+    let rev = 0;
+    try { rev = (typeof LiveDataStore !== 'undefined') ? LiveDataStore.rev : 0; } catch (e) { rev = 0; }
+    const sc = scope || {};
+    let ms = '';
+    try { ms = (typeof MonitoringScope !== 'undefined') ? String(MonitoringScope.rev) : ''; } catch (e) { ms = ''; }
+    let orgRev = 0;
+    try { orgRev = (typeof OrgResolver !== 'undefined' ? OrgResolver.rev : 0) | 0; } catch (e) { orgRev = 0; }
+    /* V1.7.9.2 — periode aktif masuk cache key supaya state periode lama tidak
+       pernah dipakai ulang setelah period berganti. */
+    return [rev, orgRev, sc.regional || '', sc.branch || '', sc.depot || '', ms,
+            activePeriodMonth() || ''].join('|');
+  }
+
+  /* ---- matrix Depo x tanggal publish ---- */
+  function build(scope) {
+    const key = cacheKeyOf(scope);
+    if (_cache && _cacheKey === key) return _cache;
+
+    const snap = InformationService.getSnapshot(scope || {});
+    const depotRows = snap.rows.slice().sort(function (a, b) {
+      return String(a.regional_code_display || '').localeCompare(String(b.regional_code_display || ''), 'id') ||
+        String(a.branch_name_display || '').localeCompare(String(b.branch_name_display || ''), 'id') ||
+        String(a.depot_name_display || '').localeCompare(String(b.depot_name_display || ''), 'id') ||
+        String(a.depot_code || '').localeCompare(String(b.depot_code || ''), 'id');
+    });
+    const allow = {};
+    depotRows.forEach(function (r) { allow[r.depot_code] = 1; });
+
+    /* V1.7.9.3 — event matrix berasal dari SATU resolver sesuai effective mode:
+       COMPLETE -> contract saja; PARTIAL -> contract + observable; NONE -> []. */
+    const modeInfo = evaluateCapability();
+    const events = eventsForMatrix();
+    const scoped = events.filter(function (e) { return allow[e.depot_code]; });
+
+    /* V1.7.9.1 — COMPLETE dengan nol event adalah kondisi SAH: matrix tetap
+       dirender penuh dan hari kerja eligible menjadi merah. */
+    if ((!events.length && modeInfo.mode !== 'COMPLETE') || modeInfo.mode === 'NONE') {
+      _cacheKey = key;
+      _cache = { available: false, reason: 'NO_HISTORY', rows: [], dates: [], month: null,
+                 depotCount: depotRows.length, eventCount: 0,
+                 mode: 'NONE', complete: false,
+                 capability: capabilityOf([], modeInfo) };
+      return _cache;
+    }
+
+    /* PERIOD SAFETY — bulan matrix:
+         COMPLETE : period_month yang dinyatakan contract publish_history V1.
+         PARTIAL  : bulan dari tanggal publish TERBARU pada scope.
+       Bulan lain TIDAK PERNAH dicampur ke dalam matrix. Tidak ada bulan hardcode. */
+    let maxDate = null;
+    (scoped.length ? scoped : events).forEach(function (e) {
+      if (maxDate === null || e.date > maxDate) maxDate = e.date;
+    });
+    let monthKey = null;
+    if (modeInfo.mode === 'COMPLETE' && modeInfo.periodMonth) monthKey = modeInfo.periodMonth.slice(0, 7);
+    else if (maxDate) monthKey = maxDate.slice(0, 7);
+    else {
+      const act = activePeriodMonth();
+      monthKey = act || (todayWib() ? iso(todayWib().y, todayWib().m, 1).slice(0, 7) : null);
+    }
+    if (!monthKey) {
+      _cacheKey = key;
+      _cache = { available: false, reason: 'NO_PERIOD', rows: [], dates: [], month: null,
+                 depotCount: depotRows.length, eventCount: 0, mode: modeInfo.mode, complete: false,
+                 capability: capabilityOf([], modeInfo) };
+      return _cache;
+    }
+    const year = Number(monthKey.slice(0, 4)), mon = Number(monthKey.slice(5, 7));
+    const dim = daysInMonth(year, mon);
+    const tw = todayWib();
+    let endDay;
+    if (tw && tw.y === year && tw.m === mon) endDay = tw.d;          /* bulan berjalan -> s.d. hari ini */
+    else endDay = dim;                                              /* bulan lampau  -> satu bulan penuh */
+    const maxDay = (maxDate && maxDate.slice(0, 7) === monthKey) ? Number(maxDate.slice(8, 10)) : 0;
+    if (maxDay > endDay) endDay = maxDay;
+    if (endDay > dim) endDay = dim;
+    if (endDay < 1) endDay = 1;
+
+    const dates = [];
+    for (let d = 1; d <= endDay; d++) {
+      const dIso = iso(year, mon, d), dw = dowOf(dIso);
+      dates.push({ iso: dIso, day: d, dow: dw, sunday: dw === 0,
+                   future: !!(tw && dIso > tw.iso), label: U.pad(d),
+                   dowLabel: U.DAYS[dw].slice(0, 3) });
+    }
+
+    /* index depot|date -> bag; hanya tanggal yang benar-benar ada publish. */
+    const idx = {};
+    for (let i = 0; i < scoped.length; i++) {
+      const e = scoped[i];
+      if (e.date.slice(0, 7) !== monthKey) continue;
+      const k = e.depot_code + '|' + e.date;
+      let bag = idx[k];
+      if (!bag) bag = idx[k] = { PROCESS: [], RESULT: [] };
+      bag[e.domain].push(e);
+    }
+    function latestOf(list) {
+      /* AUTHORITY "terakhir" = TIMESTAMP publish terbesar per domain.
+         Bukan HK terbesar, bukan revision_number terbesar. revision_number
+         hanya tie-break deterministik saat timestamp benar-benar identik. */
+      let best = null;
+      for (let i = 0; i < list.length; i++) {
+        const e = list[i];
+        if (best === null || e.ms > best.ms ||
+            (e.ms === best.ms && (Number(e.revision) || 0) > (Number(best.revision) || 0))) best = e;
+      }
+      return best;
+    }
+    function distinctActions(list) {
+      const set = {};
+      for (let i = 0; i < list.length; i++) set[actionKeyOf(list[i])] = 1;
+      return set;
+    }
+    /* Ringkasan per cell dihitung SEKALI di sini (hanya untuk bag yang ada),
+       sehingga renderer cukup lookup O(1) tanpa filter ulang per Depo x Tanggal. */
+    const summary = {};
+    for (const k in idx) {
+      if (!Object.prototype.hasOwnProperty.call(idx, k)) continue;
+      const bag = idx[k];
+      const pList = bag.PROCESS, hList = bag.RESULT;
+      const pAct = distinctActions(pList), hAct = distinctActions(hList);
+      const pActions = Object.keys(pAct).length, hActions = Object.keys(hAct).length;
+      /* union aksi publish pada hari itu: satu klik Publish yang membawa
+         PROCESS + RESULT dihitung SATU aksi, bukan dua. */
+      const allAct = {};
+      for (const a in pAct) if (Object.prototype.hasOwnProperty.call(pAct, a)) allAct[a] = 1;
+      for (const a in hAct) if (Object.prototype.hasOwnProperty.call(hAct, a)) allAct[a] = 1;
+      /* V1.7.9 — BADGE = DISTINCT PUBLISH ACTION (union antar domain) pada
+         Depo x Tanggal tersebut. PROCESS + RESULT dari satu aksi publish =>
+         union = 1 => TANPA badge. Dua publish_event_id berbeda (walau satu
+         hanya PROCESS dan satunya hanya RESULT) => union = 2 => badge 2x.
+         Math.max per domain TIDAK dipakai lagi sebagai authority badge. */
+      const repeat = Object.keys(allAct).length;
+      /* daftar waktu per AKSI publish (bukan per batch mentah) */
+      const grouped = {}, order = [];
+      pList.concat(hList).forEach(function (e) {
+        const a = actionKeyOf(e);
+        let g = grouped[a];
+        if (!g) { g = grouped[a] = { ms: e.ms, time: e.time, p: null, h: null }; order.push(a); }
+        if (e.ms < g.ms) { g.ms = e.ms; g.time = e.time; }
+        const slot = e.domain === 'PROCESS' ? 'p' : 'h';
+        if (!g[slot] || e.ms > g[slot].ms) g[slot] = e;
+      });
+      const times = order.map(function (a) { return grouped[a]; })
+        .sort(function (a, b) { return a.ms - b.ms; })
+        .map(function (g) {
+          const parts = [];
+          if (g.p) parts.push('Proses' + (g.p.hk === null ? '' : ' HK' + g.p.hk));
+          if (g.h) parts.push('Hasil' + (g.h.hk === null ? '' : ' HK' + g.h.hk));
+          return g.time + (parts.length ? ' · ' + parts.join(' · ') : '');
+        });
+      const pLast = latestOf(pList), hLast = latestOf(hList);
+      summary[k] = {
+        processHk: pLast ? pLast.hk : null, resultHk: hLast ? hLast.hk : null,
+        processCount: pActions, resultCount: hActions,
+        processBatches: pList.length, resultBatches: hList.length,
+        publishCount: Object.keys(allAct).length,
+        repeat: repeat > 1 ? repeat : 0,
+        times: times
+      };
+    }
+
+    const EMPTY_CELL = { processHk: null, resultHk: null, processCount: 0, resultCount: 0,
+                         processBatches: 0, resultBatches: 0, publishCount: 0, repeat: 0, times: [] };
+
+    /* ====================================================================
+       STATE CELL — satu-satunya tempat keputusan visual dibuat.
+         publish    : ada publish observable pada tanggal itu.
+         holiday    : Minggu (non-working day) tanpa publish.
+         future     : tanggal belum terjadi -> netral, TIDAK PERNAH merah.
+         missing    : hari kerja tanpa publish DAN history COMPLETE ->
+                      benar-benar tidak publish (merah).
+         unverified : hari kerja tanpa publish tetapi history PARTIAL ->
+                      belum dapat diverifikasi (netral, BUKAN merah).
+                      Absennya event pada sumber PARTIAL bukan bukti Depo
+                      tidak publish, sehingga tuduhan merah dilarang.
+       ==================================================================== */
+    const complete = modeInfo.mode === 'COMPLETE';
+    const rows = depotRows.map(function (r) {
+      const cells = dates.map(function (dt) {
+        const s = summary[r.depot_code + '|' + dt.iso] || EMPTY_CELL;
+        const has = s.publishCount > 0;
+        const state = has ? 'publish'
+                    : dt.sunday ? 'holiday'
+                    : dt.future ? 'future'
+                    : complete ? 'missing' : 'unverified';
+        return {
+          date: dt.iso, day: dt.day, sunday: dt.sunday, future: dt.future,
+          hasPublish: has, state: state,
+          processHk: s.processHk, resultHk: s.resultHk,
+          processCount: s.processCount, resultCount: s.resultCount,
+          processBatches: s.processBatches, resultBatches: s.resultBatches,
+          publishCount: s.publishCount, repeat: s.repeat,
+          times: s.times
+        };
+      });
+      return {
+        depot_code: r.depot_code,
+        depot: r.depot_name_display || r.depot_code || '–',
+        branch: r.branch_name_display || '',
+        regional: [r.regional_code_display, r.regional_name_display].filter(Boolean).join(' '),
+        cells: cells,
+        publishedDays: cells.filter(function (c) { return c.hasPublish; }).length
+      };
+    });
+
+    const cap = capabilityOf(scoped.filter(function (e) { return e.date.slice(0, 7) === monthKey; }), modeInfo);
+    _cacheKey = key;
+    _cache = { available: true, reason: '', rows: rows, dates: dates, month: monthKey,
+               monthLabel: U.MONTHS[mon - 1] + ' ' + year,
+               mode: modeInfo.mode, complete: complete, source: modeInfo.source,
+               depotCount: rows.length, eventCount: cap.observableEventCount,
+               batchCount: cap.observableBatchCount,
+               capability: cap,
+               workdayCount: dates.filter(function (d) { return !d.sunday && !d.future; }).length };
+    return _cache;
+  }
+
+  return { build: build,
+           /* NONE / PARTIAL / COMPLETE — dibaca ResultCapabilities. */
+           mode: mode,
+           /* diagnostic terbuka untuk audit; tidak dipakai untuk klaim UI besar */
+           capability: function (scope) { const d = build(scope || {}); return d.capability; },
+           /* diagnostic terbuka untuk audit precedence */
+           sources: function () {
+             return { contract: collectContractEvents().length,
+                      observable: collectObservableEvents().length,
+                      matrix: eventsForMatrix().length,
+                      mode: evaluateCapability().mode };
+           },
+           invalidate: function () {
+             _cache = null; _cacheKey = '';
+             _contractCache = null; _contractKey = '';
+             _obsCache = null; _obsKey = '';
+             _capCache = null; _capKey = '';
+           } };
+})();
 /* ============================================================================
    LAYER 6 — APP STATE
    ========================================================================= */
@@ -6368,6 +8504,12 @@ const ResultTrendChart = {
   format: function (key, v) { return key === 'omset' ? this.money(v) : U.dec(v, 1); },
   mount: function (host, trend) {
     this.destroy(); if (!host) return;
+    /* V1.7.8 — Trend Project tanpa granular authority: jujur, bukan Total Depo. */
+    if (trend && trend.unavailable) {
+      host.innerHTML = UI.empty('Trend Project Belum Tersedia', trend.unavailableMessage ||
+        'Data harian per Salesman belum tersedia untuk Coverage Project ini.');
+      return;
+    }
     if (!trend.points.length) { host.innerHTML = UI.empty('Tidak Ada Data Trend', 'Belum ada data hasil kerja pada bulan aktif.'); return; }
     const pts = trend.points, self = this;
     host.innerHTML = '<div class="result-trend-grid">' + trend.series.map(function (s) {
@@ -7142,6 +9284,11 @@ const Renderer = (function (S) {
   function renderResultDaily(data) {
     const m = data.metric;
     const seg = data.metrics.map(function (x) { return '<button data-act="result-daily" data-m="' + x.key + '" aria-pressed="' + (x.key === m.key) + '">' + U.esc(x.label) + '</button>'; }).join('');
+    /* V1.7.8 — Coverage Project aktif tanpa granular salesman harian:
+       tampilkan pesan jujur, JANGAN tampilkan Total Depo. */
+    if (data.unavailable)
+      return resultDailySectionHtml(data, seg,
+        UI.empty('Harian Project Belum Tersedia', data.unavailableMessage));
     return resultDailySectionHtml(data, seg, resultDailyTableHtml(data));
   }
   function resultDailyTableHtml(data) {
@@ -7166,10 +9313,21 @@ const Renderer = (function (S) {
     /* V1.7.7 — catatan wajib: Daily V2 bergrain Depo dan TIDAK mengikuti
        Coverage Salesman. Ditampilkan inline (bukan pop-up). */
     const v2 = data.source === 'RESULT_DAILY_DEPOT_V2';
-    const note = 'Shading menunjukkan posisi relatif dalam data aktif · “–” berarti tidak ada data.' +
-      (v2 ? ' · ' + U.esc(data.totalDepotNote) +
+    const scoped = data.source === 'RESULT_DAILY_SCOPED';
+    const note = data.unavailable
+      ? (data.reason === 'INCOMPLETE'
+        ? 'Rollout contract granular Project belum lengkap pada scope ini (' +
+          U.int(data.coverage ? data.coverage.availableDepots : 0) + '/' +
+          U.int(data.coverage ? data.coverage.expectedDepots : 0) +
+          ' Depo). Aggregate parent sengaja tidak dihitung dari subset Depo, dan Total Depo tidak dipakai.'
+        : data.reason === 'NO_MEMBER'
+        ? 'Tidak ada Salesman Project pada scope ini. Ini berbeda dari kondisi data belum lengkap.'
+        : 'Coverage Salesman aktif tidak memiliki granular Salesman × Tanggal pada kontrak LIVE. ' +
+          'Total Depo tidak ditampilkan karena tidak merepresentasikan Project.')
+      : ('Shading menunjukkan posisi relatif dalam data aktif · “–” berarti tidak ada data.' +
+        ((v2 || scoped) ? ' · ' + U.esc(data.totalDepotNote) +
             ' Tanggal mengikuti Tanggal Order dari Website ASS; Omset parent = jumlah Depo, ' +
-            'Avg EC parent = rata-rata antar Depo (1 Depo = 1 suara).' : '');
+            'Avg EC parent = rata-rata antar Depo (1 Depo = 1 suara).' : ''));
     return '<section class="section" id="resultDailySection"><div class="section-head"><span class="section-title">Monitoring Harian</span><span class="spacer"></span><div class="seg" role="group" aria-label="Pilih metrik hasil harian">' + seg + '</div>' +
       (data.level === 'national' ? '' : '<button class="btn-ghost" data-act="back">← Kembali</button>') + '</div><div class="section-body flush">' + table + '</div><div class="section-body" style="padding-top:9px"><span class="section-sub">' + note + '</span></div></section>';
   }
@@ -7189,6 +9347,34 @@ const Renderer = (function (S) {
       ? '<div class="ach-note"><b>Baseline Coverage:</b> ' + U.esc(data.header.coverage) + '</div>' : '';
     const grainNote = (data.level === 'depot' || data.level === 'ass' || data.level === 'salesman')
       ? '<div class="ach-note"><b>Grain Baseline:</b> comparison historical authoritative tersedia sampai level Depo. Baris ASS/Salesman tidak memiliki baseline dan ditampilkan sebagai “–”.</div>' : '';
+    /* V1.7.9 — Coverage Project dengan baseline salesman authoritative. */
+    if (data.projectScoped && data.projectBaselineAvailable) {
+      const bl = data.header ? data.header.baselineLabel : 'Baseline';
+      const basis = data.header && data.header.basis
+        ? '<div class="ach-note"><b>Comparison Basis:</b> ' + U.esc(data.header.basis) + ' (authority Website ASS).</div>' : '';
+      const cov = data.header && data.header.coverage
+        ? '<div class="ach-note"><b>Baseline Coverage:</b> ' + U.esc(data.header.coverage) + '</div>' : '';
+      return '<div class="result-table-wrap" data-dsrc="result_detail_mtd"><table class="rtbl" style="min-width:1050px"><thead><tr><th>' + U.esc(data.childLabel) +
+        '</th><th>Omset ' + U.esc(bl) + '</th><th>Real Omset</th><th>Growth</th><th>ROA ' + U.esc(bl) + '</th><th>ROA</th><th>Growth</th><th>EC ' + U.esc(bl) + '</th><th>EC</th><th>Growth</th></tr></thead><tbody>' + rows + '</tbody></table></div>' +
+        basis + cov + grainNote +
+        '<div class="ach-note">Pasangan Current/Baseline berasal dari RESULT Baseline Salesman V1 (Website ASS) dan sudah difilter Coverage <b>' +
+        U.esc(data.projectLabel || SalesmanProjectScope.label()) + '</b>. Depo tanpa pasangan baseline tidak dianggap nol.</div>';
+    }
+    /* V1.7.8 — saat Coverage Project aktif tanpa baseline salesman authoritative,
+       Baseline Total Depo TIDAK comparable dan sengaja tidak dipakai. */
+    if (data.projectScoped) {
+      return '<div class="result-table-wrap" data-dsrc="result_detail_mtd"><table class="rtbl" style="min-width:1050px"><thead><tr><th>' + U.esc(data.childLabel) +
+        '</th><th>Omset Baseline</th><th>Real Omset</th><th>Growth</th><th>ROA Baseline</th><th>ROA</th><th>Growth</th><th>EC Baseline</th><th>EC</th><th>Growth</th></tr></thead><tbody>' + rows + '</tbody></table></div>' +
+        (data.projectBaselinePartial
+          ? '<div class="ach-note"><b>Baseline Project belum lengkap</b>' +
+            (data.header && data.header.coverage ? ' (' + U.esc(data.header.coverage) + ')' : '') +
+            ' pada scope ini; perbandingan tidak ditampilkan agar tidak menggunakan subset data. ' +
+            'Kolom <b>Real</b> tetap tampil karena RESULT MTD salesman-level sudah authoritative.</div>'
+          : '<div class="ach-note"><b>Baseline Project belum tersedia.</b> Coverage Salesman aktif: <b>' +
+            U.esc(data.projectLabel || SalesmanProjectScope.label()) + '</b>. Kolom <b>Real</b> sudah benar-benar hanya salesman Project tersebut. ' +
+            'Baseline authoritative dari Website ASS bergrain <b>Depo</b> dan periode pembanding salesman-level tidak tersedia pada kontrak LIVE, ' +
+            'sehingga Baseline dan Growth ditampilkan “–”. Angka Total Depo sengaja TIDAK dipakai agar comparison tetap apple-to-apple.</div>');
+    }
     return '<div class="result-table-wrap" data-dsrc="result_detail_mtd"><table class="rtbl" style="min-width:1050px"><thead><tr><th>' + U.esc(data.childLabel) +
       '</th><th>Omset ' + U.esc(baseLabel) + '</th><th>Real Omset</th><th>Growth</th><th>ROA ' + U.esc(baseLabel) + '</th><th>ROA</th><th>Growth</th><th>EC ' + U.esc(baseLabel) + '</th><th>EC</th><th>Growth</th></tr></thead><tbody>' + rows + '</tbody></table></div>' +
       distribution + coverage + grainNote + '<div class="ach-note">Baseline mengikuti slot M-1 authoritative per Depo dari Website ASS; Depo tanpa baseline tidak dianggap nol.</div>';
@@ -7333,7 +9519,7 @@ const Renderer = (function (S) {
           renderResultAchievement(achievement)) +
         renderResultDaily(daily) +
         UI.section('Trend Hasil Kerja', U.esc(ctx.currentLabel) + ' · ' + ctx.hk + ' hari kerja' +
-          (trend.source === 'RESULT_DAILY_DEPOT_V2'
+          ((trend.source === 'RESULT_DAILY_DEPOT_V2' || (trend.source === 'RESULT_DAILY_SCOPED' && !trend.unavailable))
             ? ' · Tanggal Order · ' + U.esc(trend.totalDepotNote) : ''),
           '<div id="resultTrendHost"></div>') +
         UI.section('Detail MTD', U.esc(detail.header ? detail.header.title : (ctx.currentLabel + ' HK' + (ctx.hk === null ? '–' : ctx.hk) + ' vs Baseline belum tersedia')),
@@ -7412,6 +9598,107 @@ const Renderer = (function (S) {
       '<span class="info-sep"> · </span><span class="info-time">' + U.esc(time) + '</span>' +
       infoStatusHtml(status);
   }
+  /* ==========================================================================
+     V1.7.8 — RIWAYAT UPDATE HARIAN (matrix Depo x TANGGAL PUBLISH).
+     Kolom = tanggal publish, BUKAN HK report. Cell = posisi P/H terakhir pada
+     tanggal publish tersebut. Tidak ada scoring/compliance tambahan.
+     ========================================================================== */
+  function phistHk(v) { return v === null || v === undefined ? '—' : U.int(v); }
+  function phistCellHtml(cell, depotLabel) {
+    const dLabel = U.dMed(cell.date), dow = U.dDow(cell.date);
+    /* V1.7.9 — state ditentukan service (publish/holiday/future/missing/unverified).
+       MERAH hanya untuk state 'missing', yaitu ketika history COMPLETE. */
+    if (cell.state === 'holiday')
+      return '<td class="phist-cell is-holiday" title="' + U.esc(dow + ', ' + dLabel + ' · Minggu (non-working day) · tidak perlu publish') +
+        '"><span class="phist-holiday">LIBUR</span></td>';
+    if (cell.state === 'future')
+      return '<td class="phist-cell is-future" title="' + U.esc(dow + ', ' + dLabel + ' · belum terjadi') + '"></td>';
+    if (cell.state === 'missing')
+      return '<td class="phist-cell is-missing" title="' + U.esc(depotLabel + ' · ' + dow + ', ' + dLabel +
+        ' · Tidak ada publish') + '"><span class="phist-miss">—</span></td>';
+    if (cell.state === 'unverified')
+      return '<td class="phist-cell is-unverified" title="' + U.esc(depotLabel + ' · ' + dow + ', ' + dLabel +
+        ' · Belum dapat diverifikasi — histori publish lengkap belum tersedia.') +
+        '"><span class="phist-unk">?</span></td>';
+    /* V1.7.8.1 — badge & count berasal dari DISTINCT PUBLISH ACTION, bukan
+       jumlah batch. PROCESS + RESULT dalam satu aksi publish = 1x (tanpa badge). */
+    const badge = cell.repeat > 1
+      ? '<span class="phist-badge" title="' + U.esc('Proses ' + cell.processCount + 'x publish · Hasil ' + cell.resultCount + 'x publish') + '">' +
+        cell.repeat + 'x</span>' : '';
+    const tip = [depotLabel + ' · ' + dow + ', ' + dLabel,
+      cell.publishCount + 'x publish',
+      'Process: ' + cell.processCount + 'x',
+      'Result: ' + cell.resultCount + 'x']
+      .concat(cell.times)
+      .concat(['Latest: P' + phistHk(cell.processHk) + ' H' + phistHk(cell.resultHk)])
+      .concat(cell.sunday ? ['Catatan: hari Minggu (non-working day)'] : [])
+      .join('\n');
+    const cls = 'phist-cell is-publish' + (cell.sunday ? ' is-holiday-publish' : '') + (cell.repeat > 1 ? ' is-repeat' : '');
+    return '<td class="' + cls + '" title="' + U.esc(tip) + '"><span class="phist-hk">P' +
+      phistHk(cell.processHk) + ' H' + phistHk(cell.resultHk) + '</span>' + badge + '</td>';
+  }
+  function renderPublishHistory(scope) {
+    let data = null;
+    try { data = PublishHistoryService.build(scope || {}); }
+    catch (err) {
+      return '<section class="info-section"><div class="info-section-head">' +
+        '<span class="info-section-title">Riwayat Update Harian</span></div>' +
+        '<div class="section-body">' + UI.error('Riwayat Publish Gagal Dibaca', String(err && err.message || err)) + '</div></section>';
+    }
+    if (!data.available || !data.rows.length || !data.dates.length) {
+      const desc = !data.available
+        ? 'Riwayat publish harian belum tersedia dari sumber LIVE. Read Gateway existing belum mengirim event/batch publish historis dengan timestamp publish, dan riwayat TIDAK dibuat dari snapshot update terakhir.'
+        : 'Tidak ada Depo pada scope aktif untuk ditampilkan.';
+      return '<section class="info-section"><div class="info-section-head">' +
+        '<span class="info-section-title">Riwayat Update Harian</span>' +
+        '<span class="info-section-meta">' + U.esc(scopeName()) + '</span></div>' +
+        '<div class="section-body">' + UI.empty('Riwayat Publish Belum Tersedia', desc) + '</div></section>';
+    }
+    const head = data.dates.map(function (d) {
+      return '<th class="phist-dh' + (d.sunday ? ' is-sun' : '') + (d.future ? ' is-future' : '') +
+        '" title="' + U.esc(U.DAYS[d.dow] + ', ' + U.dMed(d.iso)) + '"><span class="phist-dh-d">' +
+        U.esc(d.label) + '</span><span class="phist-dh-w">' + U.esc(d.dowLabel) + '</span></th>';
+    }).join('');
+    /* Legend adaptif: MERAH hanya bermakna (dan hanya muncul) pada mode
+       COMPLETE; pada PARTIAL yang berlaku adalah neutral "?". */
+    const complete = data.mode === 'COMPLETE';
+    const legend =
+      '<span class="phist-legend"><span class="phist-key is-publish"></span>Putih = Publish</span>' +
+      (complete
+        ? '<span class="phist-legend"><span class="phist-key is-missing"></span>Merah = Tidak publish</span>'
+        : '<span class="phist-legend"><span class="phist-key is-unverified"></span>Neutral ? = Belum dapat diverifikasi</span>') +
+      '<span class="phist-legend"><span class="phist-key is-repeat"></span>Orange = &gt;1x publish</span>' +
+      '<span class="phist-legend"><span class="phist-key is-holiday"></span>Abu = Minggu</span>';
+    const body = data.rows.map(function (r) {
+      const label = r.depot;
+      const cells = r.cells.map(function (c) { return phistCellHtml(c, label); }).join('');
+      return '<tr><th class="phist-depo" scope="row" title="' + U.esc([r.regional, r.branch, r.depot].filter(Boolean).join(' › ')) +
+        '"><span class="phist-depo-name">' + U.esc(label) + '</span>' +
+        (r.branch ? '<span class="phist-depo-sub">' + U.esc(r.branch) + '</span>' : '') + '</th>' + cells + '</tr>';
+    }).join('');
+    return '<section class="info-section" id="publishHistorySection">' +
+      '<div class="info-section-head"><span class="info-section-title">Riwayat Update Harian</span>' +
+      '<span class="info-section-meta">' + U.esc(data.monthLabel) + ' · ' + U.esc(scopeName()) + ' · ' +
+      U.int(data.depotCount) + ' Depo · ' + U.int(data.dates.length) + ' tanggal · Histori ' +
+      U.esc(complete ? 'lengkap' : 'sebagian') + '</span></div>' +
+      '<div class="info-table-wrap phist-wrap"><table class="phist-table"><thead><tr>' +
+      '<th class="phist-depo phist-corner">Depo</th>' + head + '</tr></thead><tbody>' + body + '</tbody></table></div>' +
+      '<div class="note-inline"><b>Kolom = TANGGAL PUBLISH</b> (bukan HK report). Cell menampilkan posisi ' +
+      '<b>P</b> (HK Proses) dan <b>H</b> (HK Hasil) terakhir pada tanggal publish tersebut. ' +
+      legend +
+      ' Batch dideduplikasi memakai <b>batch_id</b>; jumlah publish dihitung dari <b>publish action</b> ' +
+      '(<b>publish_event_id</b>, fallback timestamp publish), bukan dari jumlah batch atau baris KPI. ' +
+      'Proses 1x + Hasil 1x dalam satu aksi publish adalah kondisi normal dan TIDAK diberi badge revisi. ' +
+      'Posisi P/H terakhir mengikuti timestamp publish terbaru per domain. ' +
+      'Waktu memakai WIB. Section ini mengikuti Monitoring Scope / Regional / Cabang / Depo dan ' +
+      '<b>tidak</b> mengikuti Coverage Salesman.' +
+      /* V1.7.9 — catatan kecil netral bila sumber histori belum lengkap. */
+      (!complete
+        ? ' <span class="phist-cap-note">Riwayat publish masih mengikuti histori yang tersedia; hari tanpa event belum dapat dinilai sampai sumber histori lengkap tersedia.</span>'
+        : '') +
+      '</div></section>';
+  }
+
   function renderInformationDashboard() {
     const host = $('#informationBody'); if (!host) return;
     try {
@@ -7449,6 +9736,8 @@ const Renderer = (function (S) {
             '<strong class="info-summary-value">' +
             (data.maxResultHK === null ? '–' : U.int(data.maxResultHK)) + '</strong></div>' +
           hkRangeHtml(data.maxResultHK, data.minResultHK) + '</section></div>' +
+        /* V1.7.8 — riwayat disiplin publish harian, di ATAS Update per Depo. */
+        renderPublishHistory(AppState.scope) +
         '<section class="info-section"><div class="info-section-head"><span class="info-section-title">Update per Depo</span>' +
           '<span class="info-section-meta">' + U.esc(scopeName()) + ' · ' + U.int(data.rows.length) + ' Depo</span></div>' +
           '<div class="info-table-wrap"><table class="info-table"><colgroup>' +
@@ -7733,7 +10022,12 @@ const Renderer = (function (S) {
     result_daily: {
       domain: 'hasil', label: 'Monitoring Harian',
       metricLabel: function (k) { const m = S.getResultDaily({}, k).metric; return m ? m.label : ''; },
-      build: function (scope, metricKey) { return resultDailyTableHtml(S.getResultDaily(scope, metricKey)); },
+      build: function (scope, metricKey) {
+        const d = S.getResultDaily(scope, metricKey);
+        /* V1.7.8 — drilldown juga jujur saat Coverage Project tanpa granular. */
+        if (d.unavailable) return UI.empty('Harian Project Belum Tersedia', d.unavailableMessage);
+        return resultDailyTableHtml(d);
+      },
       note: 'Shading menunjukkan posisi relatif dalam data aktif · “–” berarti tidak ada data.'
     },
     result_detail_mtd: {
