@@ -7,8 +7,40 @@
 <style>
 /* ============================================================
    PORTAL MONITORING ASS — PUSAT
-   Build Pusat V1.7.9.4  |  PUBLISH HISTORY ATOMIC REPLACEMENT
+   Build Pusat V1.7.10.1  |  PERIOD-AWARE COMPLETENESS + BRANCH GROUP IDENTITY
    ---------------------------------------------------------------------------
+   V1.7.10.1 — PERIOD-AWARE COMPLETENESS + BRANCH GROUP IDENTITY
+   A. Status Lengkap / Belum Lengkap pada Update Control Center kini
+      period-aware: PROCESS dinilai terhadap latest PROCESS period dan RESULT
+      terhadap latest RESULT period (domain-specific). Update terakhir dari
+      PERIODE LAIN tidak lagi dihitung sebagai current, tetapi evidence-nya
+      tetap terlihat pada kolom Proses/Hasil. PROCESS dan RESULT TIDAK pernah
+      dipaksa berada pada bulan yang sama.
+   B. Identitas group Cabang memakai internal branch key Master Cabang bila
+      tersedia, atau key UI-only deterministik Regional + nama Cabang. Cabang
+      berbeda yang berbagi branch_code fallback generik tidak lagi tergabung,
+      dan Cabang bernama sama di Regional berbeda tetap terpisah.
+   C. Verdict period diambil dari status InformationService existing (Update /
+      Tertinggal X HK / Periode lain / Belum Update) — tidak ada formula
+      periode baru. InformationService, PublishHistoryService, OrgResolver dan
+      Master Cabang tidak diubah.
+
+   V1.7.10 — INFORMASI: UPDATE CONTROL CENTER
+   A. Section "Update per Depo" dihapus sebagai tabel terpisah dan digabung ke
+      satu tabel unified "Riwayat Update": DEPO | PROSES | HASIL | tanggal.
+   B. Kolom PROSES/HASIL memakai authority latest existing (depot_update_latest
+      + status Update / Tertinggal X HK / Belum Update); tidak ada HK sintetis
+      dan tidak ada threshold freshness baru.
+   C. Grouping collapsible per Cabang, filter status (Semua / Belum Lengkap /
+      Sudah Lengkap), window riwayat (7 / 14 hari / Bulan Ini) dan search
+      Depo/Cabang/Regional — seluruhnya presentation state (AppState.info).
+   D. Ringkasan menjadi 5 kartu status + 2 kartu HK existing; kartu ke-5 hanya
+      menjadi "Perlu Follow-up" bila histori COMPLETE (missing terverifikasi),
+      selain itu "Belum Lengkap" (fail-safe).
+   E. Semantik publish history V1.7.9.4 (COMPLETE / PARTIAL / NONE, atomic
+      replacement, authoritative empty, badge publish action, Minggu, future
+      date, observable cross-check) TIDAK diubah — UI baru hanya membacanya.
+
    V1.7.9.4 — PUBLISH HISTORY ATOMIC REPLACEMENT
    A. Setiap response yang membawa node publish_history sekarang menggantikan
       authoritative history state sebelumnya secara atomic; same-period rows
@@ -882,6 +914,120 @@ table{ border-collapse:separate; border-spacing:0; width:100%; }
 .jpg-stage .phist-wrap{ overflow:visible !important; }
 .jpg-stage .phist-depo{ box-shadow:none; }
 
+/* ============ V1.7.10 — UPDATE CONTROL CENTER (menu INFORMASI) ============
+   Satu tabel unified: DEPO | PROSES | HASIL | tanggal…
+   Sticky kolom kiri, grouping per Cabang, tanpa warna baru (memakai palet
+   status existing: hijau ok, merah verified missing, kuning multiple publish,
+   abu-abu unverified/non-working). */
+.uc-cards{ display:grid; grid-template-columns:repeat(5,minmax(0,1fr)); gap:10px; margin-top:14px; }
+.uc-card{ min-width:0; background:var(--surface-1); border:1px solid var(--line);
+  border-radius:var(--radius); box-shadow:var(--shadow-1); padding:11px 13px; }
+.uc-card-label{ color:var(--ink-3); font-size:9.5px; font-weight:750; letter-spacing:.10em;
+  text-transform:uppercase; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.uc-card-value{ color:var(--brand-deep); font-size:23px; font-weight:800; line-height:1.05; margin-top:3px; }
+.uc-card-value.is-warn{ color:#a5342a; }
+.uc-card-sub{ color:var(--ink-3); font-size:10px; margin-top:3px;
+  overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+@media (max-width:1100px){ .uc-cards{ grid-template-columns:repeat(3,minmax(0,1fr)); } }
+@media (max-width:620px){ .uc-cards{ grid-template-columns:repeat(2,minmax(0,1fr)); gap:8px; }
+  .uc-card{ padding:9px 10px; } .uc-card-value{ font-size:19px; } }
+.uc-toolbar{
+  display:flex; align-items:center; gap:10px; flex-wrap:wrap;
+  padding:9px 14px; border-bottom:1px solid var(--line); background:var(--surface-2);
+}
+.uc-group-label{ font-size:9.5px; font-weight:750; letter-spacing:.075em;
+  text-transform:uppercase; color:var(--ink-3); margin-right:2px; }
+.uc-seg{ display:inline-flex; border:1px solid var(--line); border-radius:6px; overflow:hidden; background:var(--surface-1); }
+.uc-seg button{
+  border:0; background:transparent; cursor:pointer; padding:4px 9px;
+  font-size:10.5px; font-weight:700; color:var(--ink-3); font-family:inherit;
+  border-right:1px solid var(--line);
+}
+.uc-seg button:last-child{ border-right:0; }
+.uc-seg button[aria-pressed="true"]{ background:var(--brand); color:#fff; }
+.uc-seg button:focus-visible{ outline:2px solid var(--brand); outline-offset:-2px; }
+.uc-search{
+  flex:1 1 190px; min-width:150px; max-width:280px; padding:5px 9px;
+  border:1px solid var(--line); border-radius:6px; font-size:11px; font-family:inherit;
+  background:var(--surface-1); color:var(--ink-1);
+}
+.uc-search:focus{ outline:2px solid var(--brand); outline-offset:-1px; }
+.uc-count{ margin-left:auto; font-size:10.5px; color:var(--ink-3); white-space:nowrap; }
+
+.uc-wrap{ overflow-x:auto; overflow-y:hidden; -webkit-overflow-scrolling:touch; }
+.uc-table{ border-collapse:separate; border-spacing:0; table-layout:auto;
+  font-variant-numeric:tabular-nums; min-width:100%; }
+.uc-table th,.uc-table td{
+  border-bottom:1px solid var(--line); border-right:1px solid var(--line);
+  padding:3px 4px; white-space:nowrap; text-align:center; font-size:9.5px; line-height:1.15;
+}
+.uc-table tbody tr:last-child th,.uc-table tbody tr:last-child td{ border-bottom:0; }
+/* --- kolom sticky --- */
+.uc-c-depo{ position:sticky; left:0; z-index:2; background:var(--surface-1);
+  text-align:left; min-width:158px; max-width:200px; width:158px; padding:4px 9px; }
+.uc-c-proc{ position:sticky; left:158px; z-index:2; background:var(--surface-1);
+  text-align:left; min-width:104px; width:104px; padding:4px 7px; }
+.uc-c-hasil{ position:sticky; left:262px; z-index:2; background:var(--surface-1);
+  text-align:left; min-width:104px; width:104px; padding:4px 7px;
+  box-shadow:1px 0 0 var(--line); }
+.uc-table thead th{ position:sticky; top:0; z-index:3; background:var(--surface-2);
+  color:var(--ink-3); font-size:9.5px; font-weight:750; letter-spacing:.05em; }
+.uc-table thead th.uc-c-depo,
+.uc-table thead th.uc-c-proc,
+.uc-table thead th.uc-c-hasil{ z-index:4; text-transform:uppercase; }
+.uc-dh{ padding:4px 5px; }
+.uc-dh-d{ display:block; font-size:10px; font-weight:800; color:var(--ink-2); }
+.uc-dh-w{ display:block; font-size:8px; letter-spacing:.04em; text-transform:uppercase; }
+.uc-dh.is-sun .uc-dh-d,.uc-dh.is-sun .uc-dh-w{ color:#7b8a99; }
+.uc-dh.is-future{ opacity:.55; }
+/* --- group header Cabang --- */
+.uc-grouprow > th{ background:var(--surface-2); padding:0; text-align:left; border-right:0; }
+.uc-group-inner{ position:sticky; left:0; display:flex; align-items:center; gap:8px;
+  padding:6px 10px; width:max-content; max-width:100vw; }
+.uc-toggle{
+  border:1px solid var(--line); background:var(--surface-1); border-radius:5px;
+  width:20px; height:20px; line-height:1; cursor:pointer; color:var(--ink-2);
+  font-size:9px; font-family:inherit; flex:none;
+}
+.uc-toggle:focus-visible{ outline:2px solid var(--brand); outline-offset:1px; }
+.uc-group-name{ font-size:11px; font-weight:800; color:var(--ink-1); }
+.uc-group-meta{ font-size:9.5px; color:var(--ink-3); }
+.uc-group-badge{ display:inline-block; padding:0 5px; border-radius:9px;
+  background:#fdeaea; color:#a5342a; font-size:8.5px; font-weight:800; line-height:1.7; }
+.uc-group-badge.is-ok{ background:rgba(14,159,110,.12); color:#0b7a55; }
+.uc-row.is-collapsed{ display:none; }
+/* --- kolom Depo / Proses / Hasil --- */
+.uc-depo-name{ display:block; font-size:10.5px; font-weight:750; color:var(--ink-1);
+  overflow:hidden; text-overflow:ellipsis; }
+.uc-depo-sub{ display:block; font-size:8.5px; color:var(--ink-3); }
+.uc-hk{ display:block; font-size:11px; font-weight:800; color:var(--ink-1); }
+.uc-hk.is-none{ color:#a5342a; font-size:9.5px; font-weight:750; }
+.uc-when{ display:block; font-size:8.5px; color:var(--ink-3); }
+.uc-lag{ display:inline-block; margin-top:1px; padding:0 4px; border-radius:3px;
+  font-size:7.5px; font-weight:800; line-height:1.6; }
+.uc-lag.ok{ background:rgba(14,159,110,.12); color:#0b7a55; }
+.uc-lag.lag{ background:rgba(210,85,31,.10); color:#a2521f; }
+.uc-lag.stale{ background:#eef1f4; color:#6b7c8c; }
+.uc-lag.none{ background:#fdeaea; color:#a5342a; }
+/* Export JPG: sticky dimatikan oleh .jpg-stage; SELURUH baris (termasuk group
+   yang sedang collapsed di layar) dipaksa tampil HANYA pada stage export. */
+.jpg-stage .uc-wrap{ overflow:visible !important; }
+.jpg-stage .uc-c-hasil{ box-shadow:none; }
+.jpg-stage .uc-group-inner{ position:static !important; }
+.jpg-stage .uc-row.is-collapsed{ display:table-row !important; }
+
+@media (max-width:900px){
+  /* Layar kecil: hanya Depo yang sticky supaya viewport tidak habis. */
+  .uc-c-proc,.uc-c-hasil{ position:static; }
+  .uc-c-depo{ box-shadow:1px 0 0 var(--line); min-width:132px; width:132px; }
+}
+@media (max-width:620px){
+  .uc-table th,.uc-table td{ padding:3px; font-size:9px; }
+  .uc-c-depo{ min-width:118px; width:118px; }
+  .uc-toolbar{ padding:8px 10px; gap:7px; }
+  .uc-count{ margin-left:0; }
+}
+
 @media (max-width:620px){
   .phist-table th,.phist-table td{ padding:3px; font-size:9px; }
   .phist-depo{ min-width:104px; }
@@ -1579,7 +1725,7 @@ table{ border-collapse:separate; border-spacing:0; width:100%; }
       <span class="hdr-clock" id="hdrClock"></span>
       <span class="badge-demo" id="demoBadge"
             title="Status sumber data Monitoring Pusat.">MEMUAT…</span>
-      <span class="badge-build">Build Pusat V1.7.9.4</span>
+      <span class="badge-build">Build Pusat V1.7.10.1</span>
     </div>
   </div>
   <nav class="app-nav" id="appNav" aria-label="Navigasi utama">
@@ -8261,6 +8407,16 @@ const AppState = {
              /* V1.7.4 — draft Total HK bulan RESULT aktif (belum tersimpan) */
              hkDraft: null },
   resultDailyMetric: 'omset',
+  /* V1.7.10 — state UI menu INFORMASI (Update Control Center).
+     MURNI presentation state: tidak pernah menyentuh data authority, scope,
+     maupun publish_history contract. */
+  info: {
+    status: 'incomplete',      /* 'all' | 'incomplete' | 'complete' */
+    window: 7,                 /* 7 | 14 | 'month' */
+    search: '',
+    collapsed: {},             /* branchKey -> true/false, override manual user */
+    focusSearch: false
+  },
   tableSort: { key: 'process_score', dir: 'asc' }
 };
 
@@ -9637,93 +9793,374 @@ const Renderer = (function (S) {
     return '<td class="' + cls + '" title="' + U.esc(tip) + '"><span class="phist-hk">P' +
       phistHk(cell.processHk) + ' H' + phistHk(cell.resultHk) + '</span>' + badge + '</td>';
   }
-  function renderPublishHistory(scope) {
-    let data = null;
-    try { data = PublishHistoryService.build(scope || {}); }
+  /* ==========================================================================
+     V1.7.10 — UPDATE CONTROL CENTER.
+
+     Section "Update per Depo" DIHAPUS sebagai tabel terpisah dan digabung ke
+     dalam SATU tabel unified:
+
+         DEPO | PROSES | HASIL | 01 | 02 | 03 | ...
+
+     - Kolom PROSES/HASIL memakai authority latest yang SAMA dengan section
+       lama (InformationService.getSnapshot -> depot_update_latest + status
+       existing). Tidak ada HK sintetis dan tidak ada threshold freshness baru.
+     - Kolom tanggal memakai PublishHistoryService apa adanya: COMPLETE /
+       PARTIAL / NONE, authoritative empty, multiple publish badge, Minggu,
+       future date, dan observable integrity cross-check TIDAK diubah.
+     - Grouping per Cabang, filter status, window tanggal dan search bersifat
+       PRESENTATION ONLY (AppState.info) dan tidak menyentuh data authority.
+     ========================================================================== */
+  function ucHasHk(v) { return v !== null && v !== undefined && isFinite(Number(v)); }
+  /* ==========================================================================
+     V1.7.10.1 — COMPLETENESS PERIOD-AWARE (presentation only).
+
+     ROOT CAUSE V1.7.10: kelengkapan hanya memeriksa "process_hk / result_hk
+     ada". Depo yang update terakhirnya berasal dari PERIODE LAIN tetap
+     terhitung lengkap.
+
+     PERBAIKAN: pakai verdict status yang SUDAH dihasilkan InformationService
+     (statusOf) — tidak ada formula periode baru:
+       state 'ok'    -> HK == HK tertinggi pada latest period domain  -> current
+       state 'lag'   -> tertinggal X HK, tetapi masih di latest period -> current
+       state 'stale' -> "Periode lain"                                -> BUKAN current
+       state 'none'  -> "Belum Update"                                -> BUKAN current
+     Perbandingan bersifat DOMAIN-SPECIFIC: PROCESS dinilai terhadap latest
+     PROCESS period dan RESULT terhadap latest RESULT period. PROCESS dan
+     RESULT TIDAK pernah dipaksa berada pada bulan yang sama.
+
+     Bila authority belum dapat menentukan latest period sebuah domain
+     (processPeriod/resultPeriod null), tidak ada pembanding yang sah sehingga
+     bukti kehadiran HK dipakai apa adanya seperti perilaku sebelumnya.
+     ========================================================================== */
+  function ucIsCurrentDomain(hk, status, latestPeriod) {
+    if (!ucHasHk(hk)) return false;
+    if (!latestPeriod) return true;
+    if (!status) return false;
+    return status.state === 'ok' || status.state === 'lag';
+  }
+  /* Normalisasi ringan untuk KEY internal grouping (bukan display, bukan fuzzy). */
+  function ucNormKey(v) {
+    return String(v === null || v === undefined ? '' : v).trim().toUpperCase().replace(/\s+/g, ' ');
+  }
+  /* "03 Sep · 10:42 WIB" — memakai helper WIB existing, bukan jam perangkat. */
+  function ucWhen(value) {
+    const p = U.wibParts(value);
+    if (!p) return '';
+    return p.d + ' ' + U.MON_S[p.m - 1] + ' · ' + p.hh + ':' + p.mm + ' WIB';
+  }
+  /* ==========================================================================
+     V1.7.10.1 — IDENTITAS GROUP CABANG (presentation only).
+
+     ROOT CAUSE V1.7.10: key grouping memakai `branch_code` apa adanya.
+     Ketika master_depot tidak membawa branch_code, organization graph memberi
+     fallback generik per Regional (mis. BR:R03) sehingga beberapa Cabang
+     berbeda dalam satu Regional dapat berbagi kode yang sama dan tergabung
+     menjadi satu group di UI.
+
+     PERBAIKAN (tanpa menyentuh OrgResolver / Master Cabang / organization graph):
+       1. Bila resolved hierarchy sudah menyediakan internal branch key yang
+          memang unik per Regional + nama Cabang (Master Cabang SSoT: "MB:…"),
+          key tersebut dipakai apa adanya.
+       2. Bila tidak, dibentuk key UI-only deterministik dari hierarchy resolved:
+          Regional + nama Cabang ternormalisasi. Regional ikut menjadi bagian
+          identitas sehingga Cabang bernama sama di Regional berbeda tetap
+          terpisah. Tidak ada fuzzy matching; display name tetap memakai nama
+          resolved existing dan key internal tidak pernah ditampilkan.
+     ========================================================================== */
+  function ucBranchKey(r) {
+    try {
+      if (typeof OrgResolver !== 'undefined' && typeof OrgResolver.isInternalBranchKey === 'function') {
+        const res = OrgResolver.resolve(r.depot_code);
+        if (res && res.branch_key && OrgResolver.isInternalBranchKey(res.branch_key)) return res.branch_key;
+      }
+    } catch (e) { /* resolver tidak tersedia -> pakai fallback deterministik */ }
+    const reg = ucNormKey(r.regional_code_display || r.regional_code || '');
+    const br = ucNormKey(r.branch_name_display || r.branch_name || r.branch_code || '');
+    return 'UIB:' + reg + '|' + (br || '(TANPA CABANG)');
+  }
+  /* Model gabungan: latest update per Depo + riwayat publish, mengikuti
+     Monitoring Scope existing (keduanya bersumber dari scope yang sama). */
+  function infoCenterModel(scope) {
+    const snap = InformationService.getSnapshot(scope || {});
+    let hist = null;
+    try { hist = PublishHistoryService.build(scope || {}); } catch (e) { hist = null; }
+    const mode = (hist && hist.mode) ? hist.mode : 'NONE';
+    const histOk = !!(hist && hist.available && hist.dates && hist.dates.length);
+    const byDepot = {};
+    if (histOk) hist.rows.forEach(function (r) { byDepot[r.depot_code] = r; });
+
+    /* Window tanggal: 7 / 14 hari terakhir pada bulan aktif, atau bulan penuh.
+       Tanggal tidak pernah diambil dari bulan lain. */
+    const allDates = histOk ? hist.dates : [];
+    const win = AppState.info.window;
+    const dates = (win === 'month' || allDates.length <= Number(win))
+      ? allDates.slice() : allDates.slice(allDates.length - Number(win));
+    const dateSet = {};
+    dates.forEach(function (d) { dateSet[d.iso] = 1; });
+
+    const rows = snap.rows.map(function (r) {
+      const h = byDepot[r.depot_code] || null;
+      const cells = h ? h.cells.filter(function (c) { return dateSet[c.date]; }) : [];
+      /* Domain-specific: PROCESS vs latest PROCESS period, RESULT vs latest
+         RESULT period. Keduanya boleh berada pada bulan yang berbeda. */
+      const hasP = ucIsCurrentDomain(r.process_hk, r.process_status, snap.processPeriod);
+      const hasH = ucIsCurrentDomain(r.result_hk, r.result_status, snap.resultPeriod);
+      /* Verified missing HANYA bila histori benar-benar COMPLETE. PARTIAL/NONE
+         tidak pernah dihitung sebagai missing. */
+      const verifiedMissing = mode === 'COMPLETE'
+        ? cells.filter(function (c) { return c.state === 'missing'; }).length : 0;
+      return {
+        depot_code: r.depot_code,
+        depot: r.depot_name_display || r.depot_code || '–',
+        branchKey: ucBranchKey(r),
+        branch: r.branch_name_display || '–',
+        regional: [r.regional_code_display, r.regional_name_display].filter(Boolean).join(' '),
+        raw: r, cells: cells, hasCells: !!h,
+        hasProcess: hasP, hasResult: hasH, complete: hasP && hasH,
+        verifiedMissing: verifiedMissing
+      };
+    });
+
+    /* Ringkasan dihitung atas SELURUH Depo pada Monitoring Scope (sebelum
+       filter status/search), sesuai definisi TOTAL DEPO. */
+    const summary = { total: rows.length, complete: 0, noProcess: 0, noResult: 0, followUp: 0 };
+    rows.forEach(function (r) {
+      if (r.complete) summary.complete++;
+      if (!r.hasProcess) summary.noProcess++;
+      if (!r.hasResult) summary.noResult++;
+      if (r.verifiedMissing > 0) summary.followUp++;
+    });
+    summary.incomplete = summary.total - summary.complete;
+
+    /* ---- filter presentation ---- */
+    const st = AppState.info.status;
+    const q = String(AppState.info.search || '').trim().toLowerCase();
+    const filtered = rows.filter(function (r) {
+      if (st === 'complete' && !r.complete) return false;
+      if (st === 'incomplete' && r.complete) return false;
+      if (!q) return true;
+      return (r.depot + ' ' + r.branch + ' ' + r.regional + ' ' + (r.depot_code || ''))
+        .toLowerCase().indexOf(q) >= 0;
+    });
+
+    /* ---- grouping per Cabang ---- */
+    const gmap = {}, glist = [];
+    filtered.forEach(function (r) {
+      let g = gmap[r.branchKey];
+      if (!g) {
+        g = gmap[r.branchKey] = { key: r.branchKey, branch: r.branch, regional: r.regional,
+                                  rows: [], total: 0, complete: 0, incomplete: 0, followUp: 0 };
+        glist.push(g);
+      }
+      g.rows.push(r); g.total++;
+      if (r.complete) g.complete++; else g.incomplete++;
+      if (r.verifiedMissing > 0) g.followUp++;
+    });
+    glist.forEach(function (g) {
+      g.rows.sort(function (a, b) {
+        if (a.complete !== b.complete) return a.complete ? 1 : -1;
+        return String(a.depot).localeCompare(String(b.depot), 'id') ||
+               String(a.depot_code).localeCompare(String(b.depot_code), 'id');
+      });
+    });
+    /* Deterministic: Cabang bermasalah dahulu (lebih banyak masalah lebih atas),
+       lalu Regional dan nama Cabang. Tidak ada urutan random. */
+    glist.sort(function (a, b) {
+      const ap = a.incomplete > 0 ? 0 : 1, bp = b.incomplete > 0 ? 0 : 1;
+      if (ap !== bp) return ap - bp;
+      if (a.incomplete !== b.incomplete) return b.incomplete - a.incomplete;
+      return String(a.regional).localeCompare(String(b.regional), 'id') ||
+             String(a.branch).localeCompare(String(b.branch), 'id') ||
+             String(a.key).localeCompare(String(b.key), 'id');
+    });
+
+    return { snap: snap, hist: hist, mode: mode, histOk: histOk,
+             dates: dates, allDateCount: allDates.length,
+             rows: rows, filtered: filtered, groups: glist, summary: summary,
+             searchActive: !!q };
+  }
+
+  function ucSummaryCard(label, value, tone, sub) {
+    return '<section class="uc-card"><div class="uc-card-label">' + U.esc(label) + '</div>' +
+      '<div class="uc-card-value' + (tone ? ' ' + tone : '') + '">' + value + '</div>' +
+      (sub ? '<div class="uc-card-sub" title="' + U.esc(sub) + '">' + U.esc(sub) + '</div>' : '') +
+      '</section>';
+  }
+  /* Kolom PROSES / HASIL — authority latest existing, tampilan compact. */
+  function ucLatestCell(domain, hk, uploadedAt, period, status, maxHk) {
+    const isP = domain === 'P';
+    const cue = infoCue(hk, maxHk);
+    const label = isP ? 'Proses Kerja' : 'Hasil Kerja';
+    if (!ucHasHk(hk)) {
+      return '<td class="' + (isP ? 'uc-c-proc' : 'uc-c-hasil') + '" title="' +
+        U.esc('Belum ada data ' + label) + '"><span class="uc-hk is-none">Belum Update</span></td>';
+    }
+    const per = infoPeriodLabel(period);
+    const tip = label + (per ? ' ' + per : '') + ' HK ' + U.int(Number(hk)) +
+      ' · upload ' + infoUploadLabel(uploadedAt) + (status ? ' · ' + status.label : '');
+    const chip = status ? '<span class="uc-lag ' +
+      (status.state === 'ok' ? 'ok' : status.state === 'lag' ? 'lag'
+        : status.state === 'stale' ? 'stale' : 'none') + '">' + U.esc(status.label) + '</span>' : '';
+    return '<td class="' + (isP ? 'uc-c-proc' : 'uc-c-hasil') + cue + '" title="' + U.esc(tip) + '">' +
+      '<span class="uc-hk">' + (isP ? 'P' : 'H') + U.int(Number(hk)) + '</span>' +
+      '<span class="uc-when">' + U.esc(ucWhen(uploadedAt) || '–') + '</span>' + chip + '</td>';
+  }
+
+  function renderUpdateCenter(scope) {
+    let m = null;
+    try { m = infoCenterModel(scope); }
     catch (err) {
       return '<section class="info-section"><div class="info-section-head">' +
-        '<span class="info-section-title">Riwayat Update Harian</span></div>' +
-        '<div class="section-body">' + UI.error('Riwayat Publish Gagal Dibaca', String(err && err.message || err)) + '</div></section>';
+        '<span class="info-section-title">Riwayat Update</span></div>' +
+        '<div class="section-body">' + UI.error('Data Update Gagal Dibaca', String(err && err.message || err)) + '</div></section>';
     }
-    if (!data.available || !data.rows.length || !data.dates.length) {
-      const desc = !data.available
-        ? 'Riwayat publish harian belum tersedia dari sumber LIVE. Read Gateway existing belum mengirim event/batch publish historis dengan timestamp publish, dan riwayat TIDAK dibuat dari snapshot update terakhir.'
-        : 'Tidak ada Depo pada scope aktif untuk ditampilkan.';
-      return '<section class="info-section"><div class="info-section-head">' +
-        '<span class="info-section-title">Riwayat Update Harian</span>' +
-        '<span class="info-section-meta">' + U.esc(scopeName()) + '</span></div>' +
-        '<div class="section-body">' + UI.empty('Riwayat Publish Belum Tersedia', desc) + '</div></section>';
+    const info = AppState.info;
+    const complete = m.mode === 'COMPLETE';
+    const nDates = m.dates.length;
+    const colCount = 3 + nDates;
+
+    const seg = function (act, opts, current) {
+      return '<div class="uc-seg" role="group">' + opts.map(function (o) {
+        return '<button type="button" data-act="' + act + '" data-v="' + U.esc(String(o.v)) +
+          '" aria-pressed="' + (String(o.v) === String(current)) + '">' + U.esc(o.label) + '</button>';
+      }).join('') + '</div>';
+    };
+    const toolbar = '<div class="uc-toolbar">' +
+      '<span class="uc-group-label">Status</span>' +
+      seg('uc-status', [{ v: 'all', label: 'Semua' }, { v: 'incomplete', label: 'Belum Lengkap' },
+                        { v: 'complete', label: 'Sudah Lengkap' }], info.status) +
+      '<span class="uc-group-label">Riwayat</span>' +
+      seg('uc-window', [{ v: '7', label: '7 Hari' }, { v: '14', label: '14 Hari' },
+                        { v: 'month', label: 'Bulan Ini' }], info.window) +
+      '<input class="uc-search" id="ucSearch" type="search" autocomplete="off" ' +
+      'aria-label="Cari Depo atau Cabang" placeholder="Cari Depo / Cabang…" value="' +
+      U.esc(info.search) + '">' +
+      '<span class="uc-count">' + U.int(m.filtered.length) + ' dari ' + U.int(m.rows.length) +
+      ' Depo' + (nDates ? ' · ' + U.int(nDates) + ' tanggal' : '') + '</span></div>';
+
+    /* ---- empty states yang eksplisit (tidak pernah tabel kosong tanpa sebab) ---- */
+    let bodyHtml = '';
+    if (!m.rows.length) {
+      bodyHtml = '<div class="section-body">' + UI.empty('Tidak Ada Depo pada Scope Ini',
+        'Monitoring Scope aktif tidak memuat Depo dengan status Informasi aktif.') + '</div>';
+    } else if (!m.filtered.length) {
+      const why = m.searchActive
+        ? 'Tidak ada Depo yang cocok dengan pencarian "' + info.search.trim() + '".'
+        : info.status === 'incomplete'
+          ? 'Semua Depo pada scope ini sudah lengkap (Proses dan Hasil tersedia).'
+          : 'Belum ada Depo yang lengkap pada scope ini.';
+      bodyHtml = '<div class="section-body">' + UI.empty('Tidak Ada Baris untuk Filter Ini', why) + '</div>';
+    } else {
+      const dateHead = m.dates.map(function (d) {
+        return '<th class="uc-dh' + (d.sunday ? ' is-sun' : '') + (d.future ? ' is-future' : '') +
+          '" title="' + U.esc(U.DAYS[d.dow] + ', ' + U.dMed(d.iso)) + '"><span class="uc-dh-d">' +
+          U.esc(d.label) + '</span><span class="uc-dh-w">' + U.esc(d.dowLabel) + '</span></th>';
+      }).join('');
+      const body = m.groups.map(function (g, gi) {
+        const gid = 'ucg' + gi;
+        /* Default: Cabang bermasalah EXPANDED, Cabang lengkap COLLAPSED.
+           Override manual user dihormati; search selalu meng-expand. */
+        let expanded = g.incomplete > 0;
+        if (Object.prototype.hasOwnProperty.call(info.collapsed, g.key)) expanded = !info.collapsed[g.key];
+        if (m.searchActive) expanded = true;
+        const badge = g.incomplete > 0
+          ? '<span class="uc-group-badge">' + U.int(g.incomplete) + ' Belum Lengkap</span>'
+          : '<span class="uc-group-badge is-ok">Lengkap</span>';
+        const followUp = (complete && g.followUp > 0)
+          ? '<span class="uc-group-badge">' + U.int(g.followUp) + ' Perlu Follow-up</span>' : '';
+        const head = '<tr class="uc-grouprow"><th colspan="' + colCount + '" scope="colgroup">' +
+          '<div class="uc-group-inner">' +
+          '<button type="button" class="uc-toggle" data-act="uc-group" data-k="' + U.esc(g.key) + '" ' +
+          'aria-expanded="' + expanded + '" aria-controls="' + gid + '" aria-label="' +
+          U.esc((expanded ? 'Tutup' : 'Buka') + ' ' + g.branch) + '">' +
+          (expanded ? '▾' : '▸') + '</button>' +
+          '<span class="uc-group-name">' + U.esc(g.branch) + '</span>' +
+          '<span class="uc-group-meta">' + U.esc(g.regional || '–') + ' · ' +
+          U.int(g.complete) + '/' + U.int(g.total) + ' Lengkap</span>' +
+          badge + followUp + '</div></th></tr>';
+        const rows = g.rows.map(function (r) {
+          const cells = nDates ? m.dates.map(function (d) {
+            const c = r.cells.filter(function (x) { return x.date === d.iso; })[0];
+            /* Depo tanpa baris histori sama sekali tetap TIDAK dianggap missing. */
+            return c ? phistCellHtml(c, r.depot)
+                     : '<td class="phist-cell is-unverified" title="' +
+                       U.esc(r.depot + ' · ' + U.dMed(d.iso) + ' · Belum dapat diverifikasi — histori publish lengkap belum tersedia.') +
+                       '"><span class="phist-unk">?</span></td>';
+          }).join('') : '';
+          return '<tr class="uc-row' + (expanded ? '' : ' is-collapsed') + '" data-ucg="' + U.esc(gid) + '">' +
+            '<th class="uc-c-depo" scope="row" title="' +
+            U.esc([r.regional, r.branch, r.depot].filter(Boolean).join(' › ')) + '">' +
+            '<span class="uc-depo-name">' + U.esc(r.depot) + '</span>' +
+            (r.depot_code ? '<span class="uc-depo-sub">' + U.esc(r.depot_code) + '</span>' : '') + '</th>' +
+            ucLatestCell('P', r.raw.process_hk, r.raw.process_uploaded_at, r.raw.process_period_month,
+                         r.raw.process_status, m.snap.maxProcessHK) +
+            ucLatestCell('H', r.raw.result_hk, r.raw.result_uploaded_at, r.raw.result_period_month,
+                         r.raw.result_status, m.snap.maxResultHK) + cells + '</tr>';
+        }).join('');
+        return head + rows;
+      }).join('');
+      bodyHtml = '<div class="info-table-wrap uc-wrap"><table class="uc-table"><thead><tr>' +
+        '<th class="uc-c-depo">Depo</th><th class="uc-c-proc">Proses</th><th class="uc-c-hasil">Hasil</th>' +
+        dateHead + '</tr></thead><tbody>' + body + '</tbody></table></div>';
     }
-    const head = data.dates.map(function (d) {
-      return '<th class="phist-dh' + (d.sunday ? ' is-sun' : '') + (d.future ? ' is-future' : '') +
-        '" title="' + U.esc(U.DAYS[d.dow] + ', ' + U.dMed(d.iso)) + '"><span class="phist-dh-d">' +
-        U.esc(d.label) + '</span><span class="phist-dh-w">' + U.esc(d.dowLabel) + '</span></th>';
-    }).join('');
-    /* Legend adaptif: MERAH hanya bermakna (dan hanya muncul) pada mode
-       COMPLETE; pada PARTIAL yang berlaku adalah neutral "?". */
-    const complete = data.mode === 'COMPLETE';
-    const legend =
-      '<span class="phist-legend"><span class="phist-key is-publish"></span>Putih = Publish</span>' +
-      (complete
-        ? '<span class="phist-legend"><span class="phist-key is-missing"></span>Merah = Tidak publish</span>'
-        : '<span class="phist-legend"><span class="phist-key is-unverified"></span>Neutral ? = Belum dapat diverifikasi</span>') +
-      '<span class="phist-legend"><span class="phist-key is-repeat"></span>Orange = &gt;1x publish</span>' +
-      '<span class="phist-legend"><span class="phist-key is-holiday"></span>Abu = Minggu</span>';
-    const body = data.rows.map(function (r) {
-      const label = r.depot;
-      const cells = r.cells.map(function (c) { return phistCellHtml(c, label); }).join('');
-      return '<tr><th class="phist-depo" scope="row" title="' + U.esc([r.regional, r.branch, r.depot].filter(Boolean).join(' › ')) +
-        '"><span class="phist-depo-name">' + U.esc(label) + '</span>' +
-        (r.branch ? '<span class="phist-depo-sub">' + U.esc(r.branch) + '</span>' : '') + '</th>' + cells + '</tr>';
-    }).join('');
-    return '<section class="info-section" id="publishHistorySection">' +
-      '<div class="info-section-head"><span class="info-section-title">Riwayat Update Harian</span>' +
-      '<span class="info-section-meta">' + U.esc(data.monthLabel) + ' · ' + U.esc(scopeName()) + ' · ' +
-      U.int(data.depotCount) + ' Depo · ' + U.int(data.dates.length) + ' tanggal · Histori ' +
-      U.esc(complete ? 'lengkap' : 'sebagian') + '</span></div>' +
-      '<div class="info-table-wrap phist-wrap"><table class="phist-table"><thead><tr>' +
-      '<th class="phist-depo phist-corner">Depo</th>' + head + '</tr></thead><tbody>' + body + '</tbody></table></div>' +
-      '<div class="note-inline"><b>Kolom = TANGGAL PUBLISH</b> (bukan HK report). Cell menampilkan posisi ' +
-      '<b>P</b> (HK Proses) dan <b>H</b> (HK Hasil) terakhir pada tanggal publish tersebut. ' +
-      legend +
-      ' Batch dideduplikasi memakai <b>batch_id</b>; jumlah publish dihitung dari <b>publish action</b> ' +
-      '(<b>publish_event_id</b>, fallback timestamp publish), bukan dari jumlah batch atau baris KPI. ' +
-      'Proses 1x + Hasil 1x dalam satu aksi publish adalah kondisi normal dan TIDAK diberi badge revisi. ' +
-      'Posisi P/H terakhir mengikuti timestamp publish terbaru per domain. ' +
-      'Waktu memakai WIB. Section ini mengikuti Monitoring Scope / Regional / Cabang / Depo dan ' +
-      '<b>tidak</b> mengikuti Coverage Salesman.' +
-      /* V1.7.9 — catatan kecil netral bila sumber histori belum lengkap. */
-      (!complete
-        ? ' <span class="phist-cap-note">Riwayat publish masih mengikuti histori yang tersedia; hari tanpa event belum dapat dinilai sampai sumber histori lengkap tersedia.</span>'
-        : '') +
-      '</div></section>';
+
+    /* Legend & catatan: semantik histori existing dipertahankan apa adanya. */
+    const legend = nDates
+      ? ('<span class="phist-legend"><span class="phist-key is-publish"></span>Putih = Publish</span>' +
+         (complete
+           ? '<span class="phist-legend"><span class="phist-key is-missing"></span>Merah = Tidak publish</span>'
+           : '<span class="phist-legend"><span class="phist-key is-unverified"></span>Neutral ? = Belum dapat diverifikasi</span>') +
+         '<span class="phist-legend"><span class="phist-key is-repeat"></span>Orange = &gt;1x publish</span>' +
+         '<span class="phist-legend"><span class="phist-key is-holiday"></span>Abu = Minggu</span>') : '';
+    const histNote = nDates
+      ? ('<b>Kolom tanggal = TANGGAL PUBLISH</b> (bukan HK report): <b>P</b> = HK Proses, <b>H</b> = HK Hasil ' +
+         'terakhir pada tanggal publish tersebut. ' + legend +
+         ' Batch dideduplikasi memakai <b>batch_id</b>; jumlah publish dihitung dari <b>publish action</b> ' +
+         '(<b>publish_event_id</b>, fallback timestamp publish). Proses 1x + Hasil 1x dalam satu aksi publish ' +
+         'adalah kondisi normal dan TIDAK diberi badge revisi. Posisi P/H mengikuti timestamp publish terbaru per domain. ' +
+         (!complete ? '<span class="phist-cap-note">Riwayat publish masih mengikuti histori yang tersedia; hari tanpa event belum dapat dinilai sampai sumber histori lengkap tersedia.</span> ' : ''))
+      : ('<b>Riwayat publish harian belum tersedia dari sumber LIVE.</b> Kolom Proses/Hasil di atas tetap ' +
+         'menampilkan update terakhir authoritative per Depo. Riwayat TIDAK dibuat dari snapshot update terakhir. ');
+    const latestNote = 'Kolom <b>Proses</b> dan <b>Hasil</b> adalah update terakhir authoritative per Depo. ' +
+      'Status dihitung terhadap <b>HK tertinggi</b> pada periode masing-masing domain: <b>Update</b> bila sama ' +
+      'dengan HK tertinggi, <b>Tertinggal X HK</b> bila di bawahnya, dan <b>Belum Update</b> bila Depo belum ' +
+      'memiliki data. Depo tanpa data TIDAK dihitung sebagai HK 0. HK Tertinggi <b>Hasil Kerja</b> inilah yang ' +
+      'dipakai sebagai HK Berjalan TAT Ranking. Waktu memakai WIB. Section ini mengikuti Monitoring Scope / ' +
+      'Regional / Cabang / Depo dan <b>tidak</b> mengikuti Coverage Salesman.';
+
+    return '<section class="info-section" id="updateCenterSection">' +
+      '<div class="info-section-head"><span class="info-section-title">Riwayat Update</span>' +
+      '<span class="info-section-meta">' +
+      (m.hist && m.hist.monthLabel ? U.esc(m.hist.monthLabel) + ' · ' : '') +
+      U.esc(scopeName()) + ' · ' + U.int(m.rows.length) + ' Depo' +
+      (nDates ? ' · Histori ' + U.esc(complete ? 'lengkap' : 'sebagian') : '') +
+      '</span></div>' + toolbar + bodyHtml +
+      '<div class="note-inline">' + histNote + latestNote + '</div></section>';
   }
 
   function renderInformationDashboard() {
     const host = $('#informationBody'); if (!host) return;
     try {
       const data = InformationService.getSnapshot(AppState.scope);
-      const body = data.rows.length ? data.rows.map(function (r) {
-        const regional = [r.regional_code_display, r.regional_name_display].filter(Boolean).join(' ');
-        const cabang = r.branch_name_display || '–', depo = r.depot_name_display || r.depot_code || '–';
-        return '<tr><td class="info-regional" title="' + U.esc(regional) + '">' + U.esc(regional || '–') + '</td>' +
-          '<td class="info-org" title="' + U.esc(cabang) + '">' + U.esc(cabang) + '</td>' +
-          '<td class="info-org" title="' + U.esc(depo) + '">' + U.esc(depo) + '</td>' +
-          '<td class="info-hk-cell' + infoCue(r.process_hk, data.maxProcessHK) + '" title="' +
-            U.esc(r.process_hk === null || r.process_hk === undefined ? 'Belum ada data Proses Kerja' :
-              'Proses Kerja ' + (infoPeriodLabel(r.process_period_month) || '') + ' HK ' + r.process_hk +
-              ' · upload ' + infoUploadLabel(r.process_uploaded_at) +
-              (r.process_status ? ' · ' + r.process_status.label : '')) + '">' +
-            infoCell(r.process_hk, r.process_uploaded_at, data.maxProcessHK, r.process_period_month, r.process_status) + '</td>' +
-          '<td class="info-hk-cell' + infoCue(r.result_hk, data.maxResultHK) + '" title="' +
-            U.esc(r.result_hk === null || r.result_hk === undefined ? 'Belum ada data Hasil Kerja' :
-              'Hasil Kerja ' + (infoPeriodLabel(r.result_period_month) || '') + ' HK ' + r.result_hk +
-              ' · upload ' + infoUploadLabel(r.result_uploaded_at) +
-              (r.result_status ? ' · ' + r.result_status.label : '')) + '">' +
-            infoCell(r.result_hk, r.result_uploaded_at, data.maxResultHK, r.result_period_month, r.result_status) + '</td></tr>';
-      }).join('') : '<tr><td colspan="5">' + UI.empty('Tidak Ada Data', 'Tidak ada metadata update pada scope aktif.') + '</td></tr>';
+      let m = null;
+      try { m = infoCenterModel(AppState.scope); } catch (e) { m = null; }
+      const sum = m ? m.summary : { total: data.rows.length, complete: 0, noProcess: 0,
+                                    noResult: 0, followUp: 0, incomplete: 0 };
+      /* Kartu ke-5 hanya menjadi "Perlu Follow-up" bila histori COMPLETE dan
+         missing-nya verified. Selain itu tampil "Belum Lengkap" (fail-safe). */
+      const followUpVerified = !!(m && m.mode === 'COMPLETE');
+      const cards =
+        ucSummaryCard('Total Depo', U.int(sum.total), '', 'Monitoring Scope aktif') +
+        ucSummaryCard('Lengkap', U.int(sum.complete), '', 'Proses + Hasil tersedia') +
+        ucSummaryCard('Belum Proses', U.int(sum.noProcess), sum.noProcess ? 'is-warn' : '', 'Latest PROCESS belum ada') +
+        ucSummaryCard('Belum Hasil', U.int(sum.noResult), sum.noResult ? 'is-warn' : '', 'Latest RESULT belum ada') +
+        (followUpVerified
+          ? ucSummaryCard('Perlu Follow-up', U.int(sum.followUp), sum.followUp ? 'is-warn' : '', 'Missing workday terverifikasi')
+          : ucSummaryCard('Belum Lengkap', U.int(sum.incomplete), sum.incomplete ? 'is-warn' : '', 'Histori belum dapat memverifikasi missing'));
 
-      host.innerHTML = '<div class="info-summary" aria-label="Ringkasan HK terbaru pada scope aktif">' +
+      host.innerHTML =
+        '<div class="uc-cards" aria-label="Ringkasan status update Depo pada scope aktif">' + cards + '</div>' +
+        '<div class="info-summary" aria-label="Ringkasan HK terbaru pada scope aktif">' +
         '<section class="info-summary-card"><div class="info-summary-stream">Proses Kerja' +
             (data.processPeriod ? ' · ' + U.esc(infoPeriodLabel(data.processPeriod)) : '') + '</div>' +
           '<div class="info-summary-row"><span class="info-summary-label">HK Tertinggi</span>' +
@@ -9736,20 +10173,14 @@ const Renderer = (function (S) {
             '<strong class="info-summary-value">' +
             (data.maxResultHK === null ? '–' : U.int(data.maxResultHK)) + '</strong></div>' +
           hkRangeHtml(data.maxResultHK, data.minResultHK) + '</section></div>' +
-        /* V1.7.8 — riwayat disiplin publish harian, di ATAS Update per Depo. */
-        renderPublishHistory(AppState.scope) +
-        '<section class="info-section"><div class="info-section-head"><span class="info-section-title">Update per Depo</span>' +
-          '<span class="info-section-meta">' + U.esc(scopeName()) + ' · ' + U.int(data.rows.length) + ' Depo</span></div>' +
-          '<div class="info-table-wrap"><table class="info-table"><colgroup>' +
-            '<col style="width:16%"><col style="width:19%"><col style="width:21%"><col style="width:22%"><col style="width:22%"></colgroup>' +
-            '<thead><tr><th>Regional</th><th>Cabang</th><th>Depo</th><th>Proses</th><th>Hasil</th></tr></thead>' +
-            '<tbody>' + body + '</tbody></table></div>' +
-          '<div class="note-inline">Status dihitung terhadap <b>HK tertinggi</b> pada periode masing-masing domain: ' +
-          '<b>Update</b> bila sama dengan HK tertinggi, <b>Tertinggal X HK</b> bila di bawahnya, dan ' +
-          '<b>Belum Update</b> bila Depo belum memiliki data. Depo tanpa data TIDAK dihitung sebagai HK 0 ' +
-          'pada HK Terendah. HK Tertinggi <b>Hasil Kerja</b> inilah yang dipakai sebagai HK Berjalan TAT Ranking.</div>' +
-          '</section>';
+        renderUpdateCenter(AppState.scope);
       JpgExportService.decorate();
+      /* Fokus search dikembalikan hanya bila user memang sedang mengetik. */
+      if (AppState.info.focusSearch) {
+        const box = document.getElementById('ucSearch');
+        if (box) { const v = box.value; box.focus(); try { box.setSelectionRange(v.length, v.length); } catch (e) {} }
+        AppState.info.focusSearch = false;
+      }
     } catch (err) {
       host.innerHTML = '<section class="section">' + UI.error('Error Mengambil Informasi Update', String(err && err.message || err)) + '</section>';
       if (window.console) console.error(err);
@@ -9757,7 +10188,7 @@ const Renderer = (function (S) {
   }
   function renderInformation() {
     $('#viewHost').innerHTML = '<header class="info-head"><h1 class="info-title">INFORMASI UPDATE DATA</h1>' +
-      '<p class="info-subtitle">Monitoring HK dan waktu upload terakhir Proses Kerja &amp; Hasil Kerja per Depo.</p></header>' +
+      '<p class="info-subtitle">Update control center: status kelengkapan, posisi HK terakhir Proses &amp; Hasil, dan riwayat publish per Depo.</p></header>' +
       sourceNote('informasi') + scopeWarningHtml() +
       renderResultFilterBar(false) + JpgExportService.allButtonHtml() + '<div id="informationBody"></div>';
     renderInformationDashboard();
@@ -10067,6 +10498,7 @@ const Renderer = (function (S) {
   function drillChildLevel(scope) { return S.childLevelOf(scope); }
 
   return { renderView: renderView, renderDashboard: renderDashboard, renderResultDashboard: renderResultDashboard,
+           renderInformationDashboard: renderInformationDashboard,
            refresh: refresh, updateDaily: updateDaily, scopeName: scopeName, orgLabel: orgLabel, scorePill: scorePill,
            drillBody: drillBody, drillViewMeta: drillViewMeta, drillChildLevel: drillChildLevel,
            levelLabel: function (l) { return S.levelLabel(l); },
@@ -13743,15 +14175,22 @@ const JpgExportService = {
   /* ---------- pembersihan clone ---------- */
   REMOVE_SELECTORS: [
     '.filter-bar', '.scope-bar', '.rk-tabs', '.demo-note', '.report-actions',
-    '[data-jpg-btn]', '.jpg-btn', '.seg', '.hm-seg', '.rk-toolbar',
+    '[data-jpg-btn]', '.jpg-btn', '.seg', '.hm-seg', '.rk-toolbar', '.uc-toolbar',
     'button', 'select', 'input', 'textarea', 'label', '.skel', '.modal-backdrop', '.app-toast'
   ],
   EXPAND_SELECTORS: [
     '.daily-wrap', '.mtx-wrap', '.table-wrap', '.result-table-wrap', '.ach-wrap',
-    '.rk-wrap', '.info-table-wrap', '.chart-host', '.contrib-list', '.section-body'
+    '.rk-wrap', '.info-table-wrap', '.chart-host', '.contrib-list', '.section-body',
+    '.uc-wrap', '.phist-wrap'
   ],
   cleanClone: function (root) {
     const self = this;
+    /* V1.7.10 — Update Control Center: SELURUH baris hasil filter ikut export,
+       termasuk Cabang yang sedang collapsed di layar. Yang dibuka hanya CLONE
+       untuk stage export; state expand/collapse milik user tidak disentuh.
+       Toolbar filter/search ikut dibersihkan oleh REMOVE_SELECTORS existing. */
+    Array.prototype.slice.call(root.querySelectorAll('tr.uc-row.is-collapsed'))
+      .forEach(function (tr) { tr.classList.remove('is-collapsed'); });
     self.REMOVE_SELECTORS.forEach(function (sel) {
       Array.prototype.slice.call(root.querySelectorAll(sel)).forEach(function (el) {
         /* jangan hapus baris data yang kebetulan berada di dalam tabel report */
@@ -14211,6 +14650,31 @@ const Controller = {
         AppState.resultDailyMetric = el.dataset.m;
         Renderer.renderResultDashboard();
       }
+      /* ===== V1.7.10 — menu INFORMASI (Update Control Center). Murni UI state. ===== */
+      else if (act === 'uc-status') {
+        if (AppState.info.status === el.dataset.v) return;
+        AppState.info.status = el.dataset.v;
+        Renderer.renderInformationDashboard();
+      }
+      else if (act === 'uc-window') {
+        const v = el.dataset.v === 'month' ? 'month' : Number(el.dataset.v);
+        if (String(AppState.info.window) === String(v)) return;
+        AppState.info.window = v;
+        Renderer.renderInformationDashboard();
+      }
+      else if (act === 'uc-group') {
+        /* Toggle tanpa render ulang seluruh halaman: cukup baris grup terkait. */
+        const key = el.dataset.k, id = el.getAttribute('aria-controls');
+        const open = el.getAttribute('aria-expanded') !== 'true';
+        AppState.info.collapsed[key] = !open;
+        el.setAttribute('aria-expanded', String(open));
+        el.textContent = open ? '\u25be' : '\u25b8';
+        const nm = el.getAttribute('aria-label') || '';
+        el.setAttribute('aria-label', (open ? 'Tutup' : 'Buka') + nm.replace(/^(Tutup|Buka)/, ''));
+        const sec = el.closest('#updateCenterSection');
+        if (sec) Array.prototype.slice.call(sec.querySelectorAll('tr.uc-row[data-ucg="' + id + '"]'))
+          .forEach(function (tr) { tr.classList.toggle('is-collapsed', !open); });
+      }
       else if (act === 'reset') { Controller.setScope({}); }
       else if (act === 'back') { Controller.back(); }
       else if (act === 'crumb') { Controller.crumb(el.dataset.level); }
@@ -14435,6 +14899,14 @@ const Controller = {
     let rkT = null;
     document.addEventListener('input', function (e) {
       const t = e.target, r = AppState.ranking;
+      if (t.id === 'ucSearch') {
+        clearTimeout(rkT); const uv = t.value;
+        rkT = setTimeout(function () {
+          AppState.info.search = uv; AppState.info.focusSearch = true;
+          Renderer.renderInformationDashboard();
+        }, 220);
+        return;
+      }
       if (t.id === 'rkSearch') {
         clearTimeout(rkT); const v = t.value;
         rkT = setTimeout(function () { r.search = v;
